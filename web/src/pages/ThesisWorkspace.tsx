@@ -153,9 +153,11 @@ export function ThesisWorkspace({
                 {detail.engine ?? "?"} · {detail.tool_calls} tool call(s) · {detail.credits} credits
               </span>
             </div>
-            <p style={{ margin: "4px 0 0" }}>{detail.summary}</p>
+            <p style={{ margin: "4px 0 0" }}>{detail.summary ?? "still running — the verdict is not in yet"}</p>
             <div className="dim mono" style={{ marginTop: 6 }}>
-              {detail.checked_at} · watermark since {shortDate(detail.since)}
+              {detail.checked_at}
+              {detail.since && ` · watermark since ${shortDate(detail.since)}`}
+              {!detail.finished && " · in progress"}
             </div>
           </div>
 

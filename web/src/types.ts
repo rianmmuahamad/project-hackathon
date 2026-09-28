@@ -37,7 +37,8 @@ export interface CheckSummary {
   run_id: string | null;
   checked_at: string;
   since: string | null;
-  verdict: ThesisStatus;
+  /** null while the check is still running — not yet a verdict. */
+  verdict: ThesisStatus | null;
   confidence: number | null;
   summary: string | null;
   engine: string | null;
@@ -76,6 +77,8 @@ export interface CheckDetail extends CheckSummary {
   evidence: EvidenceRow[];
   changes: Change[];
   transcript?: string;
+  /** Present only once the check has written its verdict. */
+  finished?: boolean;
 }
 
 export interface QueueRow {

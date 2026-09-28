@@ -365,6 +365,9 @@ class Store:
         if not rows:
             return None
         out = dict(rows[0])
+        # A check row exists from the moment it starts. `finished` distinguishes
+        # "no verdict yet" from "verdict is unknown", which the UI must not blur.
+        out["finished"] = out.get("verdict") is not None
         out["claim_results"] = [dict(r) for r in self.q(
             "SELECT * FROM claim_results WHERE check_id=? ORDER BY ordinal", (check_id,))]
         out["evidence"] = [dict(r) for r in self.q(
