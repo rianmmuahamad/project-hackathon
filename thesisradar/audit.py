@@ -383,6 +383,46 @@ def _represented_fields(measurements: list[Measurement],
 # --------------------------------------------------------------------------
 # Jev — the decision layer
 # --------------------------------------------------------------------------
+def _claim_evidence(measurement: Measurement) -> str:
+    """One claim's own numbers, as a sentence for that claim's question only.
+
+    Kept explicit and short: the metric, its value, the change, the arithmetic's
+    own verdict and the reason for it. Nothing from the other claims.
+    """
+    bits: list[str] = []
+    if measurement.metric:
+        bits.append(f"{measurement.metric}")
+    if measurement.observed_value is not None:
+        bits.append(f"= {metrics.describe(measurement.observed_value)}")
+    if measurement.observed_date:
+        bits.append(f"on {measurement.observed_date}")
+    if measurement.delta is not None:
+        bits.append(f"({measurement.delta * 100:+.1f}% YoY)")
+    arithmetic = measurement.state
+    if measurement.rationale:
+        bits.append(f". {measurement.rationale}. Arithmetic verdict: {arithmetic}.")
+    else:
+        bits.append(f". Arithmetic verdict: {arithmetic}.")
+    return " ".join(bits)
+
+
+def _jev_state(thesis: dict[str, Any]) -> str:
+    """The shared, non-per-claim state Jev is asked against.
+
+    Deliberately excludes the per-claim numbers: those belong to each claim's own
+    question. Handing Jev one state containing every claim is what produced the
+    generalisation this replaced.
+    """
+    lines = [
+        f"STOCK: {thesis['symbol']}"
+        + (f" ({thesis['company_name']})" if thesis.get("company_name") else ""),
+        f"THESIS AS WRITTEN: {thesis['statement']}",
+        f"HORIZON: {thesis.get('horizon') or 'unspecified'}",
+        f"STATUS BEFORE THIS CHECK: {thesis.get('status') or 'unknown'}",
+    ]
+    return "\n".join(lines)
+
+
 def _decide_with_jev(thesis: dict[str, Any], measurements: list[Measurement],
                      brief: str, jev: Any, emit=None,
                      transcript: list[str] | None = None) -> dict[str, dict[str, Any]]:
@@ -404,14 +444,23 @@ def _decide_with_jev(thesis: dict[str, Any], measurements: list[Measurement],
 
     questions: dict[str, dict[str, Any]] = {}
     for index, measurement in enumerate(settleable):
+        # Each question carries its own claim's numbers and says so, because a
+        # single shared state made Jev generalise: with three claims presented
+        # together, one claim's negative context dragged the other two down, and
+        # a claim whose loans grew 16.4% with every quarter rising came back
+        # "weakening" at 0.95. TypeSafe's own guidance is that each question
+        # should be narrow and self-contained; a shared state is exactly what
+        # they warn against.
+        evidence = _claim_evidence(measurement)
         questions[f"claim_{index}"] = {
             "type": "choice",
-            "instructions": "Given the measured evidence for this claim, what is its state?",
+            "instructions": (f"Judge ONLY this claim, on only the evidence stated for it: "
+                             f"\"{measurement.text}\". Its evidence: {evidence}"),
             "criteria": {
-                "supported": "the measured numbers and context clearly still support the claim",
-                "weakening": ("the claim is not contradicted, but the trend or the context no "
-                              "longer supports it cleanly"),
-                "broken": "the measured numbers contradict the claim",
+                "supported": "the claim clearly holds on its own evidence",
+                "weakening": ("the claim is not contradicted, but its trend or the shared "
+                              "context no longer supports it cleanly"),
+                "broken": "the claim's own evidence contradicts it",
                 "unknown": "the evidence cannot settle this claim either way",
             },
         }
@@ -433,7 +482,7 @@ def _decide_with_jev(thesis: dict[str, Any], measurements: list[Measurement],
         },
     }
 
-    state = brief + "\n\nDecide the claims above. Answer only from this evidence."
+    state = _jev_state(thesis) + "\n\nDecide each claim from its own evidence. Answer only from what is given."
     try:
         decision = jev.ask(state, questions)
     except Exception as err:  # noqa: BLE001 — the decision layer is never fatal
