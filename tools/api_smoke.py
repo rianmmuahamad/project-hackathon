@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import urllib.error
 import urllib.request
 from typing import Any
@@ -45,6 +44,27 @@ def call(base: str, method: str, path: str, body: dict | None = None) -> tuple[i
         return status, json.loads(raw) if raw else None
     except ValueError:
         return status, raw[:300]
+
+
+def read_sse(base: str, path: str, timeout: int = 5) -> tuple[int, str]:
+    """Open a stream, read whatever arrives within `timeout`, then hang up."""
+    import socket
+    request = urllib.request.Request(f"{base}{path}",
+                                    headers={"Accept": "text/event-stream", "User-Agent": UA})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            # A blocking `read()` on a live stream never returns; read only what is
+            # already buffered and then close.
+            response.fp.raw._sock.settimeout(timeout)  # type: ignore[attr-defined]
+            try:
+                chunk = response.read(256)
+            except (socket.timeout, TimeoutError):
+                chunk = b""
+            return response.status, chunk.decode("utf-8", "replace")
+    except urllib.error.HTTPError as err:
+        return err.code, err.read().decode("utf-8", "replace")[:200]
+    except (urllib.error.URLError, OSError) as err:
+        return 0, f"connection failed: {err}"
 
 
 def expect(label: str, ok: bool, detail: str = "") -> None:
@@ -111,8 +131,11 @@ def main() -> int:
                and isinstance(detail.get("checks"), list),
                str(detail)[:200])
 
-        status, events = call(base, "GET", "/api/events")
-        expect("GET /api/events is an SSE stream", status == 200, f"got {status}")
+        # SSE never ends, so it cannot be read with a normal open-and-close. Read
+        # the first chunk and hang up: the assertion is that it streams at all.
+        status, first = read_sse(base, "/api/events", timeout=6)
+        expect("GET /api/events streams server-sent events", status == 200 and "event:" in first,
+               f"got {status}: {first[:120]}")
 
         latest = (detail.get("checks") or [None])[0]
         if latest:

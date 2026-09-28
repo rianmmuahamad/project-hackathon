@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 from . import engines
-from .config import REPO_ROOT, settings
+from .config import settings
 from .sectors import Budget, Sectors
 from .service import JobBusy, Service
 from .store import Store
@@ -136,6 +136,28 @@ def cmd_check(args) -> int:
     print(f"  credits: {out['credits']}   transcript: {out['transcript_path']}")
     if out.get("engine_error"):
         print(f"  engine problem: {out['engine_error']}")
+    return 0
+
+
+def cmd_credits(args) -> int:
+    """The credit ledger: what was spent, where, and what the cache saved."""
+    store = Store()
+    ledger = store.credits()
+    stats = store.stats()
+    print("Sectors API credits — this project")
+    print(f"  spent            {ledger['credits_spent']}")
+    print(f"  calls            {ledger['calls']} ({ledger['network_calls']} network, "
+          f"{ledger['cached_calls']} served from cache)")
+    print(f"  checks run       {stats['checks']} ({stats['check_credits']} credits)")
+    print(f"  theses           {stats['theses']} ({stats['watched']} watched)")
+    if ledger["by_endpoint"]:
+        print("\n  by endpoint:")
+        for endpoint, count in ledger["by_endpoint"].items():
+            print(f"    {count:>5}  {endpoint}")
+    if not args.json:
+        print(f"\n  ledger file      {settings().home / 'credits.jsonl'}")
+    if args.json:
+        _print(ledger)
     return 0
 
 
@@ -267,6 +289,10 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("queue", help="the worklist, worst first")
     p.set_defaults(func=cmd_queue)
+
+    p = sub.add_parser("credits", help="the credit ledger: spend by endpoint, and cache savings")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_credits)
 
     p = sub.add_parser("show", help="one thesis with its evidence and history")
     p.add_argument("thesis", help="thesis id or ticker")

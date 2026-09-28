@@ -11,7 +11,6 @@ import json
 import threading
 import time
 from datetime import date, timedelta
-from pathlib import Path
 from typing import Any
 
 from . import audit, engines, thesis as thesis_mod, tools

@@ -28,7 +28,7 @@ from . import metrics, tools
 from .config import settings
 from .engines import Engine, EngineUnavailable
 from .jsonx import extract_json
-from .sectors import Budget, Sectors, SectorsError, bare, last_available_day
+from .sectors import Sectors, SectorsError, bare, last_available_day
 from .store import Store
 
 MAX_TOOL_ROUNDS = 6

@@ -154,7 +154,8 @@ footnote:
 - the free `evidence_ledger` read and the quarterly fetch happen once and are shared;
 - an identical repeat tool call is **refused**, not re-paid;
 - every check runs under a hard credit ceiling and stops when it is reached;
-- `radar credits` / `GET /api/credits` report spend per endpoint, including what the cache saved.
+- `thesisradar credits` / `GET /api/credits` report spend per endpoint, including what the cache
+  saved — the ledger file is `.thesisradar/credits.jsonl`, one line per call.
 
 ---
 
@@ -164,6 +165,8 @@ footnote:
 python tools/verify_endpoints.py          # every client path + parameter against the live OpenAPI doc
 python tools/verify_endpoints.py --live   # + one real call per endpoint
 python tools/verify_pipeline.py           # end-to-end behaviour, no network, no credits
+python -m thesisradar serve &             # then, against a running server:
+python tools/api_smoke.py [--write]       # every HTTP route the dashboard uses
 cd web && npm run build                   # typecheck + bundle
 ```
 
