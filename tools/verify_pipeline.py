@@ -52,9 +52,16 @@ BBRI_QUARTERS = [
 ]
 
 
-def stub_rows() -> list[dict]:
+def stub_rows(broken: bool = False) -> list[dict]:
+    """Quarterly rows for the stub.
+
+    `broken=True` reproduces the real BMRI shape: the gross loan series jumps
+    down 15% in one quarter, which is a restatement rather than trading.
+    """
     rows = []
-    for date, loan, nii, earnings in BBRI_QUARTERS:
+    for index, (date, loan, nii, earnings) in enumerate(BBRI_QUARTERS):
+        if broken and index >= len(BBRI_QUARTERS) - 2:
+            loan = loan * 0.85
         rows.append({
             "symbol": "BBRI", "date": date,
             "revenue": nii * 1.3, "earnings": earnings,
@@ -76,9 +83,10 @@ class StubSectors(Sectors):
     metrics series that silently came back empty looked like a product bug.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, broken_series: bool = False) -> None:
         super().__init__(api_key="stub", budget=Budget(), cache=_MemoryCache(), ledger=_NoLedger())
         self.asked: list[str] = []
+        self.broken_series = broken_series
 
     def _request(self, path: str, params: dict):  # type: ignore[override]
         # Mirror the real client's caching so repeat requests cost nothing.
@@ -98,7 +106,7 @@ class StubSectors(Sectors):
     def _payload(self, path: str, params: dict):  # noqa: ANN001
         del params
         if path.startswith("/v2/financials/quarterly/"):
-            return stub_rows()
+            return stub_rows(broken=self.broken_series)
         if path.startswith("/v2/daily/"):
             return [{"date": f"2026-08-{d:02d}", "close": 3150 + d, "volume": 10_000_000}
                     for d in range(1, 29)]
@@ -291,6 +299,28 @@ def main() -> int:
               "the second check knows the previous status")
         check(len(store.list_notifications()) == 1,
               "no notification is sent when the status did not change")
+
+        print("\ndiscontinuity guard")
+        with tempfile.TemporaryDirectory() as tmp2:
+            broken_store = Store(path=Path(tmp2) / "radar.db")
+            broken_sectors = StubSectors(broken_series=True)
+            broken_id = build_thesis(broken_store, broken_sectors)
+            broken_measurements, broken_evidence = audit.measure(
+                broken_store.get_thesis(broken_id), broken_sectors)
+            broken_state = next((m.state for m in broken_measurements
+                                 if "kredit tumbuh" in m.text.lower()), None)
+            broken_rationale = next((m.rationale for m in broken_measurements
+                                     if "kredit tumbuh" in m.text.lower()), "")
+
+            check(broken_state == audit.UNKNOWN,
+                  "a series that drops 15% in one quarter yields no verdict, not a negative trend")
+            check("inconsistent" in broken_rationale or "restatement" in broken_rationale,
+                  "the guard says why: the series is treated as a definitional break")
+            check(broken_state != audit.BROKEN,
+                  "the claim is not reported broken on the strength of a restatement")
+            check(any("discontinuity" in (e.get("metric") or "") for e in broken_evidence),
+                  "the discontinuity is recorded as evidence with its date")
+            broken_store.close()
 
         print("\nengine fallback")
         availability = engines.describe()

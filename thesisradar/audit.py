@@ -191,35 +191,36 @@ def measure(thesis: dict[str, Any], sectors: Sectors,
 
         # A year-on-year figure that spans a restatement is not a trend, it is a
         # comparison of two different definitions. Refuse it out loud.
-        broken_at = metrics.break_index(series, field_name)
+        found = metrics.break_index(series, field_name)
+        broken_at, jump = found if found else (None, 0.0)
         spans_break = broken_at is not None and broken_at > yoy_index
 
-        if spans_break:
+        if spans_break and broken_at is not None:
             earlier = series[broken_at - 1]
-            later = series[broken_at]
-            jump = metrics.pct_change(later["value"], earlier["value"])
+            growth_band, drop_band = metrics.band_for(field_name)
             base.delta = None
             base.state = UNKNOWN
             base.rationale = (
                 f"The reported {field_name} series is inconsistent: it moves "
-                f"{jump * 100:+.1f}% between {earlier['date']} and {later['date']}, which is a "
-                f"restatement or a change of definition rather than trading. A year-on-year "
-                f"comparison would span that break, so this claim cannot be measured from the "
-                f"series as published."
+                f"{jump * 100:+.1f}% between {earlier['date']} and "
+                f"{series[broken_at]['date']}, which is a restatement or a change of definition "
+                f"rather than trading. A year-on-year comparison would span that break, so this "
+                f"claim cannot be measured from the series as published."
             )
             base.evidence.append({
                 "symbol": symbol, "metric": f"{field_name} discontinuity",
-                "value": f"{metrics.describe(later['value'])} from {metrics.describe(earlier['value'])}",
-                "as_of": later["date"],
+                "value": (f"{metrics.describe(series[broken_at]['value'])} from "
+                          f"{metrics.describe(earlier['value'])}"),
+                "as_of": series[broken_at]["date"],
                 "endpoint": f"/v2/financials/quarterly/{symbol}/",
-                "params": {"n_quarters": 12},
-                "note": (f"{jump * 100:+.1f}% in one quarter, beyond the "
-                         f"{metrics.DISCONTINUITY_BANDS.get(field_name, metrics.DEFAULT_BAND):.0%} "
-                         f"band for this metric — treated as a definitional break"),
+                "params": {"n_quarters": QUARTER_WINDOW},
+                "note": (f"{jump * 100:+.1f}% in one quarter, outside the "
+                         f"+{growth_band:.0%}/-{drop_band:.0%} band for this metric — treated as "
+                         f"a definitional break"),
             })
             measurements.append(base)
+            evidence.extend(base.evidence)
             continue
-
         baseline = claim.get("baseline_value")
         if isinstance(baseline, (int, float)) and baseline:
             base.baseline_delta = metrics.pct_change(latest["value"], float(baseline))

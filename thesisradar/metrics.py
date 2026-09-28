@@ -254,36 +254,52 @@ def direction_from_delta(delta: float | None) -> str:
 # is a definitional break, not a bank shrinking 15% in three months. A year-on-year
 # comparison that spans such a break is meaningless, and reporting it as "loans
 # fell 1.5%" would be exactly the quiet error this product exists to prevent.
-DISCONTINUITY_BANDS: dict[str, float] = {
-    # stocks — balance-sheet lines move slowly
-    "gross_loan": 0.20, "net_loan": 0.20, "total_deposit": 0.20, "total_assets": 0.20,
-    "total_equity": 0.25, "stockholders_equity": 0.25, "allowance_for_loans": 0.30,
-    "total_liabilities": 0.25, "total_debt": 0.35, "non_loan_assets": 0.30,
+#
+# The bands are asymmetric on purpose. A loan book can genuinely grow quickly; it
+# cannot genuinely shrink quickly. A 15% quarterly *drop* in gross loans is a
+# red flag under any reading, while 15% growth is merely brisk.
+#
+#   (max quarterly growth, max quarterly drop)
+DISCONTINUITY_BANDS: dict[str, tuple[float, float]] = {
+    # stocks — balance-sheet lines: fast growth is possible, fast shrinkage is not
+    "gross_loan": (0.20, 0.08), "net_loan": (0.20, 0.08),
+    "total_deposit": (0.20, 0.08), "total_assets": (0.18, 0.08),
+    "total_equity": (0.25, 0.12), "stockholders_equity": (0.25, 0.12),
+    "allowance_for_loans": (0.35, 0.20), "total_liabilities": (0.25, 0.10),
+    "total_debt": (0.35, 0.25), "non_loan_assets": (0.30, 0.15),
     # flows — genuinely volatile, but still bounded
-    "revenue": 0.60, "earnings": 0.60, "net_interest_income": 0.35, "interest_income": 0.40,
-    "interest_expense": 0.50, "non_interest_income": 0.60, "operating_expense": 0.40,
-    "provision": 0.90, "ebit": 0.60, "ebitda": 0.60,
-    "operating_cash_flow": 1.00, "free_cash_flow": 1.00, "net_cash_flow": 1.00,
-    "investing_cash_flow": 1.00, "financing_cash_flow": 1.00,
+    "revenue": (0.60, 0.45), "earnings": (0.70, 0.60),
+    "net_interest_income": (0.35, 0.20), "interest_income": (0.40, 0.25),
+    "interest_expense": (0.60, 0.50), "non_interest_income": (0.70, 0.60),
+    "operating_expense": (0.45, 0.35), "provision": (1.20, 0.90),
+    "ebit": (0.70, 0.60), "ebitda": (0.70, 0.60),
+    "operating_cash_flow": (1.50, 1.50), "free_cash_flow": (1.50, 1.50),
+    "net_cash_flow": (1.50, 1.50), "investing_cash_flow": (1.50, 1.50),
+    "financing_cash_flow": (1.50, 1.50),
 }
-DEFAULT_BAND = 0.60
+DEFAULT_BAND: tuple[float, float] = (1.00, 0.60)
 
 
-def break_index(series: list[dict[str, Any]], metric: str) -> int | None:
-    """Index of the first quarter-on-quarter jump beyond the metric's band.
+def band_for(metric: str) -> tuple[float, float]:
+    return DISCONTINUITY_BANDS.get(metric, DEFAULT_BAND)
+
+
+def break_index(series: list[dict[str, Any]], metric: str) -> tuple[int, float] | None:
+    """First quarter-on-quarter move beyond the metric's band, and how big it was.
 
     `series` is oldest-first. The returned index is the *later* observation, so a
     break at index 6 means the value at 6 and everything after it may be measured
     on a different basis from what came before.
     """
-    band = DISCONTINUITY_BANDS.get(metric, DEFAULT_BAND)
+    growth_band, drop_band = band_for(metric)
     for i in range(1, len(series)):
         earlier = series[i - 1]["value"]
         later = series[i]["value"]
         if not earlier:
             continue
-        if abs((later - earlier) / abs(earlier)) > band:
-            return i
+        change = (later - earlier) / abs(earlier)
+        if change > growth_band or change < -drop_band:
+            return i, change
     return None
 
 
