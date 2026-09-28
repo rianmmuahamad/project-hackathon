@@ -252,5 +252,8 @@ tools/          verification scripts
   a restatement.
 - The API exposes no NIM, NPL or CAR ratios. A thesis phrased with those is mapped to the closest
   reported field **and the tool result says so** rather than silently substituting.
+- The prose guardrail checks *numbers*, not claims: it catches "NIM below 5,8%" because no tool
+  returned that figure, but a sentence with no figures in it is only as good as the evidence
+  underneath it. A sentence that cites nothing skips the model call entirely.
 - There is no automated trading, and no investment advice: the product reports what changed and
   how confident it is. Every screen carries that framing.
