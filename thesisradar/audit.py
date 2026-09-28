@@ -633,13 +633,13 @@ The claims that are already decided have been decided from measured numbers, and
 
 Rules:
 - Do NOT restate the decided claims and do NOT dispute them.
-- ALWAYS call `what_changed` first; it is one call returning price, foreign flow, insider filings, news and corporate actions.
-- Then call at most ONE more tool, chosen to answer the question you were asked.
+- Call `what_changed` first; it is ONE call returning price, foreign flow, insider filings, news and corporate actions.
+- Then conclude. You may make one more call only if `what_changed` left the question the routing step named genuinely unanswered.
 - `market_context` and `news_search` take NO symbol argument — they are market-wide. Passing one will fail.
 - Never introduce a number, ratio or metric that no tool returned. "NIM below 6%" is not allowed.
 - If the data cannot settle something, say so. An honest "cannot tell from here" beats a confident guess.
 
-You have at most 2 tool calls. Spend them well, then reply with only the JSON block.
+You have two turns. Use the first to call a tool, the second to reply with only the JSON block.
 
 When you have enough — or when you have spent your budget — end your reply with exactly one JSON block and no other text after it. `claim_states` is optional: include it ONLY for a claim you were told could not be measured, and never to overrule a decided one.
 
@@ -925,20 +925,33 @@ def run(thesis_id: str, *, engine: Engine, store: Store, sectors: Sectors,
                    if guardrail["flagged"] else "No unsupported figure found.")
             )
 
+        # Did the agent actually add anything? A context finding, a settled claim
+        # it was asked to settle, or a falsifier we did not already have.
+        agent_contributed = bool(
+            (verdict or {}).get("context") or (verdict or {}).get("falsifiers")
+            or [s for s in steps if s.get("name") not in ("evidence_ledger",)]
+        )
+
         if engine_error:
             decision_path = "measurement"
         elif not needs_agent and jev_states:
             decision_path = "jev"
         elif guardrail.get("flagged"):
             decision_path = "agent_unverified"
-        elif jev_states:
+        elif agent_contributed and jev_states:
+            # "jev+agent" should mean the agent actually added something, not
+            # merely that it had the opportunity to — and never when there is no
+            # decision layer behind the verdict at all.
             decision_path = "jev+agent"
+        elif jev_states:
+            decision_path = "jev"
         else:
             decision_path = "agent"
 
         final_status, final_reason = _status_from_states(final_states, status)
         if overrule_notes:
             final_reason += "; " + "; ".join(overrule_notes)
+
         if guardrail.get("flagged"):
             if final_status == "intact":
                 final_status = "weakened"
