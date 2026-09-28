@@ -87,10 +87,11 @@ class HermesEngine(Engine):
 
     name = "hermes"
 
-    # Hermes' internal "reached maximum iterations" recovery writes a warning into
-    # stdout that predates our JSON block. Allowing a couple of turns avoids the
-    # warning line; `parse_text_turn` also ignores anything before the marker.
-    max_turns = "4"
+    # Hermes' internal turn budget, not ours. Our loop decides how many rounds the
+    # investigation gets; this only needs to be large enough that the model can
+    # think and then emit its TOOL CALLS block. At 4 it sometimes spent every turn
+    # reasoning and hit the recovery path instead of answering.
+    max_turns = "8"
 
     def __init__(self, binary: str | None = None, model: str | None = None,
                  timeout: int = DEFAULT_TIMEOUT) -> None:

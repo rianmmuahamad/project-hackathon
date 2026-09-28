@@ -36,10 +36,23 @@ class Settings:
     engine: str
     model: str | None
     check_budget: int
+    jev_base: str
+    jev_key: str
+    jev_model: str
+    jev_timeout: int
 
     @property
     def has_key(self) -> bool:
         return bool(self.api_key)
+
+    @property
+    def jev_configured(self) -> bool:
+        """Whether the decision layer can be reached at all.
+
+        Checked before any request so a missing key never becomes a failed call
+        that looks like a gateway outage.
+        """
+        return bool(self.jev_key)
 
 
 def settings() -> Settings:
@@ -51,6 +64,10 @@ def settings() -> Settings:
         budget = int(os.environ.get("THESISRADAR_CHECK_BUDGET") or 25)
     except ValueError:
         budget = 25
+    try:
+        jev_timeout = int(os.environ.get("THESISRADAR_JEV_TIMEOUT") or 30)
+    except ValueError:
+        jev_timeout = 30
     return Settings(
         api_key=(os.environ.get("SECTORS_API_KEY") or "").strip(),
         api_base=(os.environ.get("SECTORS_API_BASE") or "https://api.sectors.app").rstrip("/"),
@@ -58,4 +75,8 @@ def settings() -> Settings:
         engine=(os.environ.get("THESISRADAR_ENGINE") or "auto").strip().lower(),
         model=model or None,
         check_budget=max(4, budget),
+        jev_base=(os.environ.get("THESISRADAR_JEV_BASE") or "https://mot.coddx.store/v1").rstrip("/"),
+        jev_key=(os.environ.get("THESISRADAR_JEV_KEY") or "").strip(),
+        jev_model=(os.environ.get("THESISRADAR_JEV_MODEL") or "jev-1.13-free").strip(),
+        jev_timeout=max(5, jev_timeout),
     )

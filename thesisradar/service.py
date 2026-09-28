@@ -16,6 +16,7 @@ from typing import Any
 from . import audit, engines, thesis as thesis_mod, tools
 from .config import settings
 from .engines import EngineUnavailable
+from .jev import describe
 from .sectors import Budget, Sectors
 from .store import Store
 
@@ -257,8 +258,11 @@ class Service:
         return self.store.check_detail(check_id)
 
     def stats(self) -> dict[str, Any]:
+        jev = describe()
         return {"store": self.store.stats(), "credits": self.store.credits(),
-                "engine": engines.describe(), "job": self.current_job()}
+                "engine": engines.describe(),
+                "jev": {"available": jev["available"], "model": jev["model"]},
+                "job": self.current_job()}
 
     # -- thesis drafts -----------------------------------------------------
     def suggest_theses(self, *, sub_sector: str = "banks", count: int = 3,

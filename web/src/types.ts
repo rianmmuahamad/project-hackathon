@@ -46,6 +46,10 @@ export interface CheckSummary {
   credits: number;
   tool_calls: number;
   transcript_path: string | null;
+  /** Which layer decided: jev | jev+agent | agent | agent_unverified | measurement. */
+  decision_path: string | null;
+  /** Where the confidence number came from: jev | prose | rule. */
+  confidence_source: string | null;
 }
 
 export interface ClaimResult {
@@ -169,6 +173,7 @@ export interface Stats {
     by_endpoint: Record<string, number>;
   };
   engine: Record<string, { available: boolean; detail: string; model?: string }>;
+  jev: { available: boolean; model: string | null };
   job: Job | null;
 }
 

@@ -54,31 +54,64 @@ happily reported "loans fell 1.5%" across that break. It now refuses.
                         └───────────────────┬──────────────────────────┘
                                             ▼
                         ┌──────────────────────────────────────────────┐
-                        │  INTERPRET — the agent (0-8 credits)         │
-                        │  chooses from 10 tools:                      │
-                        │   what_changed · fundamentals_delta ·        │
-                        │   flow_delta · insider_activity ·            │
-                        │   corporate_action_check · sector_context ·  │
-                        │   market_context · news_search ·             │
-                        │   screen_companies · evidence_ledger         │
+                        │  DECIDE — Jev, one call, ~1 s (no credits)   │
+                        │  per claim: typed state + confidence +       │
+                        │  probabilities (not parsed prose)            │
+                        │  routing: which further fact would change it │
                         └───────────────────┬──────────────────────────┘
-                                            ▼
+                            ┌───────────────┴────────────────┐
+                    decidable == none                otherwise
+                            ▼                                ▼
+              ┌──────────────────────┐      ┌────────────────────────────────┐
+              │  no agent turn       │      │  INTERPRET — the engine         │
+              │  verdict from measured│     │  context only, 2-tool budget    │
+              │  data alone (≈1 s)    │     │  then Jev guards its prose      │
+              └───────────┬──────────┘      └───────────────┬────────────────┘
+                          └───────────────┬─────────────────┘
+                                          ▼
                     verdict + per-claim states + what changed
                           + evidence with endpoints + transcript
 ```
+
+The **routing question** is what makes the cheap path possible. Asking the agent to look at market
+context when the market did nothing is pure cost; asking Jev whether any available fact would
+change the judgement, in the same call that decided the claims, costs nothing and answers it.
 
 ### The split that makes a verdict trustworthy
 
 **Code measures.** Latest value, year-on-year change, the quarterly shape, and the threshold
 test are computed in Python from stored rows. No number in a verdict is typed by a model.
 
-**The agent interprets.** Sector and market context, corporate actions, insider behaviour, why a
-claim weakened, what changed since the last check, and how confident the conclusion deserves to
-be. Every tool it chooses is recorded.
+**Jev decides.** TypeSafe's System One model — not an LLM — takes the measured evidence and
+returns a *typed* state for each claim with a calibrated `confidence` and the full probability
+distribution, plus one routing question: which single further fact, if any, would change those
+judgements. One call, about a second, and nothing parsed out of prose. When no further fact would
+change the answer, the agent loop is **skipped entirely**.
+
+**Jev also guards the prose.** The prompt rule "never introduce a number that no tool returned"
+used to be a wish, and a live run still produced *"NIM <6%"*. Now every number-shaped token the
+agent writes is extracted, and Jev is asked which one, if any, the evidence does not contain. A
+flagged report caps the status and is stored as evidence.
+
+**The engine supplies context.** A stock that fell 3% on a day the index fell 3% has told you
+nothing about that company; whether a move is a split or a suspension is not in the numbers. That
+is the agent's whole job now — prose about context, with a two-tool budget.
+
+Each check stores which path decided it (`decision_path`) and where its confidence came from
+(`confidence_source`), so the product's central claim is inspectable rather than asserted.
+
+Measured on real runs, before and after the decision layer:
+
+| | before | after |
+| --- | --- | --- |
+| a check | 157–187 s | **81 s** |
+| per-claim verdict | free-form JSON, sometimes `[]` | typed, with probabilities |
+| confidence | the model's own number (`0.35`, `0.4`, `0.6`) | Jev's calibrated value (`0.67`, `0.95`) |
+| invented figures | unenforced prompt rule | flagged, capped, stored |
 
 When no engine is available the measurements and the evidence trail are still produced and the
-verdict degrades to `needs_review`, saying so. The product never invents an opinion it cannot
-justify.
+verdict degrades to `needs_review`, saying so; when the decision layer is unreachable the agent
+decides alone, exactly as before. The product never invents an opinion it cannot justify.
 
 ### Memory is the product
 
@@ -103,9 +136,9 @@ python -m thesisradar check BBRI   # still measures, still scores, still persist
 
 | Track requirement | Where it lives |
 | --- | --- |
-| Multi-step reasoning flows | `thesisradar/audit.py` — decompose → measure → hypothesise → choose tools → revise → verdict |
+| Multi-step reasoning flows | `thesisradar/audit.py` — decompose → measure → decide (Jev) → interpret → guard → verdict |
 | Custom tool-use pipelines | `thesisradar/tools.py` — ten tools that answer *questions* ("is this move the company's or the market's?"), not endpoint wrappers |
-| Routing between data sources | the agent chooses across price, foreign flow, broker desks, filings, news, corporate actions, suspensions, subsector peers and the index |
+| Routing between data sources | Jev decides *whether* the agent needs to run and what it should look for; the agent then chooses across price, foreign flow, broker desks, filings, news, corporate actions, suspensions, subsector peers and the index |
 | Memory or state management | `thesisradar/store.py` — theses, claims, checks, evidence, changes, watermarks, notifications, credit ledger |
 | Autonomous task execution | budget-bounded checks that run to a verdict unattended; `check-all` sweeps every watched thesis; duplicates are refused rather than re-paid |
 | Purpose-built interface | `web/` — a thesis workspace built for exactly one task, served by `thesisradar serve` |
@@ -113,7 +146,24 @@ python -m thesisradar check BBRI   # still measures, still scores, still persist
 Hermes is used as an **engine, not as the product**, and that is enforced in code: one `Engine`
 interface, two implementations (`hermes` — the local agent driven headless with its own toolsets
 disabled; `direct` — any OpenAI-compatible endpoint). Deleting Hermes leaves the same loop, the
-same tools, the same state, the same interface.
+same tools, the same state, the same interface. The same holds for Jev: the decision layer sits
+behind one client with a documented fallback, and `python tools/verify_pipeline.py` proves the
+whole pipeline still works when it raises.
+
+### Why a System One model, and not a bigger prompt
+
+Three jobs, three tools, each doing what it is actually good at:
+
+| job | who | why not the others |
+| --- | --- | --- |
+| measure reported numbers | Python | a language model cannot be trusted with arithmetic |
+| decide a claim's state, and guard prose | Jev (`Choice`, `Nul`) | answers arrive as typed values with calibrated probabilities; no tokens to parse, no prose to trust |
+| write context prose | an LLM | Jev generates no text at all — this is the one thing it cannot do |
+
+The guardrail is the clearest illustration. Asking an LLM "did you make that number up?" gets an
+opinion. Extracting the numbers in code and asking Jev *which one is absent from the evidence*
+gets a probability, and it separates cleanly: five honest sentences measured 0.07–0.09, four
+invented figures 0.64–1.00, and a sentence with no numbers at all skips the model entirely.
 
 ---
 
@@ -185,7 +235,8 @@ thesisradar/
   thesis.py     decompose a thesis into claims (model-assisted + offline fallback)
   tools.py      the agent's ten tools
   engines.py    Engine interface: hermes | direct
-  audit.py      the loop: measure → interpret → persist
+  jev.py        Jev (TypeSafe System One) — decision layer and prose guardrail
+  audit.py      the loop: measure → decide → interpret → guard → persist
   store.py      SQLite: theses, claims, checks, evidence, changes, notifications
   service.py    operations shared by CLI and server
   server.py     JSON API + SSE live transcript

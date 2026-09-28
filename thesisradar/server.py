@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import engines
 from .config import REPO_ROOT, settings
+from .jev import describe as jev_describe
 from .service import JobBusy, Service
 
 app = FastAPI(title="Thesis Radar", version="0.1.0")
@@ -51,11 +52,14 @@ def _guard(fn, *args, **kwargs) -> Any:
 # --------------------------------------------------------------------------
 @app.get("/api/health")
 def health() -> dict[str, Any]:
+    jev = jev_describe()
     return {
         "ok": True,
         "started_at": _started,
         "has_key": settings().has_key,
         "engine": engines.describe(),
+        "jev": {"available": jev["available"], "model": jev["model"],
+                "detail": jev["detail"]},
     }
 
 

@@ -12,6 +12,7 @@ from pathlib import Path
 
 from . import engines
 from .config import settings
+from .jev import describe as jev_describe
 from .sectors import Budget, Sectors
 from .service import JobBusy, Service
 from .store import Store
@@ -60,6 +61,10 @@ def cmd_doctor(args) -> int:
     for name, info in eng.items():
         mark = "ok  " if info["available"] else "warn"
         print(f"  {mark} {name:22} {info['detail']}")
+
+    jev = jev_describe()
+    mark = "ok  " if jev["available"] else "warn"
+    print(f"  {mark} {'jev (decision layer)':22} {jev['detail']}")
 
     ledger = store.credits()
     print(f"  ok   credits                 {ledger['credits_spent']} spent across "
@@ -120,10 +125,14 @@ def cmd_check(args) -> int:
 
     prev = out.get("previous_status") or "unknown"
     print(f"\n{STATUS_MARK.get(out['status'], out['status'])}   {prev} → {out['status']}"
-          f"   confidence {out['confidence']}")
+          f"   confidence {out['confidence']}"
+          f"   decided_by {out.get('decision_path') or '?'}")
+    if out.get("guardrail", {}).get("flagged"):
+        print(f"  guardrail: cites {out['guardrail'].get('unrepresented')} "
+              f"(confidence {out['guardrail'].get('score')}) — not in the evidence")
     print(f"{out['summary']}\n")
-    for row in out["measurements"]:
-        print(f"  [{row['state']:11}] {row['text']}")
+    for row in out.get("claims_final") or out["measurements"]:
+        print(f"  [{row['state']:11}] ({row.get('decided_by', 'measurement')}) {row['text']}")
         print(f"                {row['delta'] or 'n/a'}  {row['rationale']}")
     if out.get("context"):
         print(f"\n  context: {json.dumps(out['context'], ensure_ascii=False)}")

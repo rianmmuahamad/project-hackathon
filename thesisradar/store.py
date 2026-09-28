@@ -77,7 +77,9 @@ CREATE TABLE IF NOT EXISTS checks (
     model           TEXT,
     credits         INTEGER DEFAULT 0,
     tool_calls      INTEGER DEFAULT 0,
-    transcript_path TEXT
+    transcript_path TEXT,
+    decision_path   TEXT,
+    confidence_source TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_checks_thesis ON checks(thesis_id);
 
@@ -168,6 +170,19 @@ class Store:
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(SCHEMA)
         self._conn.commit()
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after a database was first created.
+
+        `CREATE TABLE IF NOT EXISTS` does nothing to a table that already exists,
+        so a database created before a column was introduced would silently lack
+        it. The demo database predates the decision layer and must keep working.
+        """
+        existing = {row["name"] for row in self.q("PRAGMA table_info(checks)")}
+        for name in ("decision_path", "confidence_source"):
+            if name not in existing:
+                self.x(f"ALTER TABLE checks ADD COLUMN {name} TEXT")
 
     # -- low level ---------------------------------------------------------
     def q(self, sql: str, args: Iterable[Any] = ()) -> list[sqlite3.Row]:
@@ -307,11 +322,14 @@ class Store:
 
     def finish_check(self, check_id: str, *, verdict: str, confidence: float | None,
                      summary: str | None, credits: int, tool_calls: int,
-                     transcript_path: str | None = None) -> None:
+                     transcript_path: str | None = None,
+                     decision_path: str | None = None,
+                     confidence_source: str | None = None) -> None:
         self.x(
             "UPDATE checks SET verdict=?, confidence=?, summary=?, credits=?, tool_calls=?, "
-            "transcript_path=? WHERE id=?",
-            (verdict, confidence, summary, credits, tool_calls, transcript_path, check_id),
+            "transcript_path=?, decision_path=?, confidence_source=? WHERE id=?",
+            (verdict, confidence, summary, credits, tool_calls, transcript_path,
+             decision_path, confidence_source, check_id),
         )
 
     def add_claim_result(self, check_id: str, result: dict[str, Any], ordinal: int) -> str:

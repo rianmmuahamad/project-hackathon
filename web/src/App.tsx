@@ -88,6 +88,12 @@ export function App() {
           <span title="reasoning engine driving the loop">
             engine <strong>{live}</strong>
           </span>
+          <span title="TypeSafe System One decides each claim from measured evidence">
+            jev{" "}
+            <strong>
+              {stats?.jev?.available ? (stats.jev.model ?? "on") : "off"}
+            </strong>
+          </span>
           <span title="Sectors API credits spent across every call this project has made">
             {stats ? `${stats.credits.credits_spent} credits` : "—"}
           </span>

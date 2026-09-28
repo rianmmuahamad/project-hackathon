@@ -147,7 +147,11 @@ export function ThesisWorkspace({
           <div className="card">
             <div className="card-head">
               <StatusChip status={detail.verdict} />
+              {detail.decision_path && <DecisionBadge path={detail.decision_path} />}
               <strong>confidence {confidence(detail.confidence)}</strong>
+              {detail.confidence_source && (
+                <span className="dim">from {detail.confidence_source}</span>
+              )}
               <span className="spacer" />
               <span className="dim mono">
                 {detail.engine ?? "?"} · {detail.tool_calls} tool call(s) · {detail.credits} credits
@@ -236,6 +240,16 @@ export function ThesisWorkspace({
       <LiveJob job={job} onFinished={onChanged} />
     </>
   );
+}
+
+/** Which layer produced the verdict — the product's central claim, made visible. */
+function DecisionBadge({ path }: { path: string }) {
+  if (path === "jev") return <span className="chip intact" title="decided by Jev from measured data; no agent turn needed">JEV</span>;
+  if (path === "jev+agent") return <span className="chip ghost" title="Jev decided the claims; the agent added context">JEV+AGENT</span>;
+  if (path === "agent_unverified") return <span className="chip broken" title="the prose cited a figure the evidence does not contain">UNVERIFIED</span>;
+  if (path === "agent") return <span className="chip ghost" title="decided by the model alone; confidence is capped">AGENT</span>;
+  if (path === "measurement") return <span className="chip ghost" title="no interpretation layer was available">MEASURED</span>;
+  return null;
 }
 
 /** Read the decomposition's unresolved list out of the stored JSON, defensively. */

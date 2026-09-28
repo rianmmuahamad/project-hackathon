@@ -146,6 +146,64 @@ class StubSectors(Sectors):
         return {}
 
 
+class StubJev:
+    """Scripted decision layer, with the same surface as `JevClient`.
+
+    Records every question it was asked, so the checks can assert what the
+    product *chose not to ask* — which is the whole point of putting the decision
+    behind the measurement.
+    """
+
+    def __init__(self, states: dict[int, tuple[str, float]] | None = None,
+                 decidable: str = "none",
+                 guardrail: tuple[str, float] | None = None,
+                 fail: bool = False) -> None:
+        self.states = states or {}
+        self.decidable = decidable
+        self.guardrail = guardrail
+        self.fail = fail
+        self.seen: list[dict] = []
+
+    def available(self) -> tuple[bool, str]:
+        return True, "stub"
+
+    def ask(self, state: str, questions: dict):  # noqa: ANN001
+        from thesisradar.jev import JevAnswer, JevDecision, JevUnavailable
+
+        if self.fail:
+            raise JevUnavailable("stub failure")
+        self.seen.append({"state": state, "questions": {k: dict(v) for k, v in questions.items()}})
+
+        answers: dict[str, JevAnswer] = {}
+        for name in questions:
+            if name.startswith("claim_"):
+                index = int(name.split("_")[1])
+                label, conf = self.states.get(index, ("supported", 0.9))
+                answers[name] = JevAnswer(name=name, kind="choice", value=label,
+                                          confidence=conf, probabilities={label: conf})
+            elif name == "decidable":
+                answers[name] = JevAnswer(name=name, kind="choice", value=self.decidable,
+                                          confidence=0.9, probabilities={self.decidable: 0.9})
+        if "unsupported" in questions:
+            label, conf = self.guardrail or ("none", 0.99)
+            answers["unsupported"] = JevAnswer(name="unsupported", kind="choice", value=label,
+                                               confidence=conf, probabilities={label: conf})
+        return JevDecision(answers=answers, usage={"input_tokens": 42}, seconds=0.01,
+                           model="stub")
+
+
+def asked_claim_count(stub: StubJev) -> int:
+    """How many claim questions the stub received, across all its calls."""
+    total = 0
+    for call in stub.seen:
+        total += sum(1 for name in call["questions"] if name.startswith("claim_"))
+    return total
+
+
+def guardrail_calls(stub: StubJev) -> list[dict]:
+    return [call for call in stub.seen if "unsupported" in call["questions"]]
+
+
 class _MemoryCache:
     """In-memory stand-in for the on-disk cache.
 
@@ -206,7 +264,7 @@ def build_thesis(store: Store, sectors: StubSectors) -> str:
     from thesisradar import thesis as thesis_mod
 
     statement = ("Beli BBRI karena kredit tumbuh minimal 10% YoY dan laba bersih naik terus "
-                 "dua kuartal ke depan.")
+                 "dua kuartal ke depan, dan valuasi masih murah dibanding bank besar lain.")
     split = thesis_mod.decompose_offline(statement)
     for claim in split["claims"]:
         claim["symbol"] = "BBRI"
@@ -251,7 +309,7 @@ def main() -> int:
         rows = store.q("SELECT watermark FROM theses WHERE id=?", (thesis_id,))
         check(rows and rows[0]["watermark"] is None, "a new thesis has no watermark yet")
 
-        print("\naudit with a scripted engine")
+        print("\naudit with a scripted engine and a scripted decision layer")
         engine = RecordingEngine(
             tool_call={"tool": "sector_context", "args": {"symbol": "BBRI"}},
             verdict={
@@ -262,14 +320,28 @@ def main() -> int:
                 "falsifiers": ["Q3 loans below 10%"],
             },
         )
-        result = audit.run(thesis_id, engine=engine, store=store, sectors=sectors)
+        # The stub mirrors what the arithmetic found, which is what a real
+        # decision layer does most of the time: it agrees with the numbers and
+        # adds a calibrated confidence to them.
+        jev = StubJev(states={0: ("supported", 0.95), 1: ("weakening", 0.88)},
+                      decidable="context:sector")
+        result = audit.run(thesis_id, engine=engine, store=store, sectors=sectors, jev=jev)
+
+        measured_ids = {m.claim_id for m in measurements
+                        if audit._measurement_shortfall(m) is None}
+        short_ids = {m.claim_id for m in measurements
+                     if audit._measurement_shortfall(m) is not None}
 
         check(result["status"] == "weakened",
               "the rollup reports weakened when one claim no longer holds")
-        check(result["confidence"] == 0.7, "confidence comes from the engine's verdict")
-        check(len(result["steps"]) >= 1 and result["steps"][0]["name"] == "evidence_ledger",
-              "the free local read happens before any paid call")
-        check(any(s["name"] == "sector_context" for s in result["steps"]),
+        check(len(jev.seen) >= 1 and asked_claim_count(jev) == len(measured_ids),
+              f"only the {len(measured_ids)} measured claim(s) were put to the decision layer, "
+              f"not the {len(short_ids)} it cannot settle")
+        check(all("valuation" not in call["state"] for call in jev.seen),
+              "a claim with no reported metric is not sent to the decision layer")
+        check(result["decision_path"] == "jev+agent",
+              "with an undecided claim and a decidable fact, both layers run")
+        check(len([s for s in result["steps"] if s["name"] == "sector_context"]) > 0,
               "the engine's chosen tool is recorded in the transcript")
         check(sectors.asked.count("/v2/financials/quarterly/BBRI/") == 1,
               "quarterly financials are fetched once per check, not once per claim")
@@ -294,7 +366,9 @@ def main() -> int:
         print("\nsecond check is cheap and silent")
         engine_two = RecordingEngine(verdict={"claim_states": [], "summary": "unchanged",
                                               "confidence": 0.7})
-        result_two = audit.run(thesis_id, engine=engine_two, store=store, sectors=sectors)
+        result_two = audit.run(thesis_id, engine=engine_two, store=store, sectors=sectors,
+                               jev=StubJev(states={0: ("supported", 0.95), 1: ("weakening", 0.88)},
+                                           decidable="context:sector"))
         check(result_two["previous_status"] == "weakened",
               "the second check knows the previous status")
         check(len(store.list_notifications()) == 1,
@@ -321,6 +395,78 @@ def main() -> int:
             check(any("discontinuity" in (e.get("metric") or "") for e in broken_evidence),
                   "the discontinuity is recorded as evidence with its date")
             broken_store.close()
+
+        print("\ndecision layer: gating, guardrail, fallback")
+        with tempfile.TemporaryDirectory() as tmp3:
+            # 1. Every claim measured, and no further fact would change it -> the
+            #    engine is never called at all.
+            store3 = Store(path=Path(tmp3) / "radar.db")
+            sectors3 = StubSectors()
+            thesis3 = build_thesis(store3, sectors3)
+            # Drop the valuation claim so nothing is left undecided.
+            keep = [c for c in store3.get_thesis(thesis3)["claims"] if c["cadence"] == "quarterly"]
+            store3.replace_claims(thesis3, keep)
+
+            silent_engine = RecordingEngine(verdict={"summary": "unused", "confidence": 0.9})
+            jev3 = StubJev(decidable="none")
+            fast = audit.run(thesis3, engine=silent_engine, store=store3, sectors=sectors3, jev=jev3)
+
+            check(silent_engine.turns == 0,
+                  "when every claim is decided and no further data would change it, the engine "
+                  "is never called")
+            check(fast["decision_path"] == "jev", "the run reports that Jev decided it alone")
+            detail3 = store3.check_detail(fast["check_id"])
+            check(detail3["confidence_source"] == "jev",
+                  "the stored check records that its confidence came from Jev")
+            expected = round(sum(c for _, c in jev3.states.values()) / max(1, len(jev3.states)), 2) \
+                if jev3.states else None
+            check(detail3["confidence"] is not None and detail3["confidence"] > 0.5,
+                  "a decided check carries Jev's calibrated confidence, not a rule-derived guess")
+            del expected
+            check(guardrail_calls(jev3) == [],
+                  "no guardrail call is made when the engine wrote nothing to guard")
+
+            # 2. The guardrail fires and caps the status.
+            flagged_engine = RecordingEngine(
+                tool_call={"tool": "sector_context", "args": {"symbol": "BBRI"}},
+                verdict={"claim_states": [], "summary": "NIM turun di bawah 5,8%.",
+                         "confidence": 0.95},
+            )
+            jev4 = StubJev(decidable="context:sector", guardrail=("5,8%", 0.93))
+            flagged = audit.run(thesis3, engine=flagged_engine, store=store3, sectors=sectors3,
+                                jev=jev4)
+            check(flagged["decision_path"] == "agent_unverified",
+                  "a report citing an unrepresented number is marked unverified")
+            check(flagged["guardrail"]["flagged"] is True and
+                  flagged["guardrail"]["unrepresented"] == ["5,8%"],
+                  "the guardrail names the offending number")
+            check(str(flagged["summary"]).startswith("⚠︎"),
+                  "the summary says out loud that a figure could not be traced")
+            check(flagged["confidence"] <= audit.CONFIDENCE_CEILING_WHEN_UNGUARDED,
+                  "unverified prose cannot carry high confidence")
+            names = {row["metric"] for row in store3.check_detail(flagged["check_id"])["evidence"]}
+            check("guardrail.unrepresented_numbers" in names,
+                  "the flagged figure is stored as evidence")
+
+            # 3. A clean report is not flagged.
+            jev5 = StubJev(decidable="context:sector", guardrail=("none", 0.97))
+            clean = audit.run(thesis3, engine=RecordingEngine(
+                tool_call={"tool": "sector_context", "args": {"symbol": "BBRI"}},
+                verdict={"claim_states": [], "summary": "Kredit +16.4% YoY tetap sesuai data.",
+                         "confidence": 0.8}), store=store3, sectors=sectors3, jev=jev5)
+            check(clean["decision_path"] == "jev+agent",
+                  "a clean report keeps the normal decision path")
+            check(clean["guardrail"]["flagged"] is False, "a clean report is not flagged")
+
+            # 4. The decision layer failing must not break the product.
+            broken = audit.run(thesis3, engine=RecordingEngine(
+                tool_call={"tool": "sector_context", "args": {"symbol": "BBRI"}},
+                verdict={"claim_states": [], "summary": "context only", "confidence": 0.7}),
+                store=store3, sectors=sectors3, jev=StubJev(fail=True))
+            check(broken["decision_path"] == "agent",
+                  "when the decision layer fails the agent still decides, as before")
+            check(broken["status"] is not None, "the check still completes a verdict")
+            store3.close()
 
         print("\nengine fallback")
         availability = engines.describe()

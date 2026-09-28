@@ -18,6 +18,7 @@ product must not invent an opinion it cannot justify.
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -28,15 +29,40 @@ from . import metrics, tools
 from .config import settings
 from .engines import Engine, EngineUnavailable
 from .jsonx import extract_json
+from .jev import JevUnavailable, jev_from_settings
 from .sectors import Sectors, SectorsError, bare, last_available_day
 from .store import Store
 
-MAX_TOOL_ROUNDS = 6
+MAX_TOOL_ROUNDS = 3
 
 # How many quarters are pulled per symbol. Twelve covers a year-on-year
 # comparison, the quarterly shape around it, and enough history to notice that a
 # reported series has been restated rather than having moved.
 QUARTER_WINDOW = 12
+
+# Cadences code cannot settle from a single reported field. Valuation claims are
+# the case that matters: "cheap versus peers" needs the agent plus guardrails,
+# while a claim measured from a quarterly series does not.
+_SETTLEABLE_CADENCES = {"quarterly"}
+
+MAX_JEV_CLAIMS = 12           # one question per claim, all in a single call
+TOOL_CALLS_WHEN_ASSISTED = 2  # budget for the agent when Jev already decided
+CONFIDENCE_CEILING_WHEN_UNGUARDED = 0.6
+GUARDRAIL_THRESHOLD = 0.5
+
+# Number-shaped tokens an agent might cite: percentages, basis points, multiples,
+# IDR magnitudes, and bare figures. Used to build the guardrail's candidate list.
+CITED_NUMBER_RE = re.compile(
+    r"(?<![\d.,])"
+    r"[+-]?\d+(?:[.,]\d+)?"
+    r"(?:\s*(?:%|bps|persen|percent|x|kali|triliun|miliar|juta|ribu|T\b|M\b|B\b))?",
+    re.IGNORECASE,
+)
+
+# "Rp2,4 triliun" is how Indonesian writes currency with no space after the
+# prefix, and the lookbehind above correctly refuses a digit glued to a word —
+# so the prefix is removed first rather than special-cased inside the pattern.
+CURRENCY_PREFIX_RE = re.compile(r"\bRp\.?\s?", re.IGNORECASE)
 
 # One claim's state, in the product's vocabulary.
 SUPPORTED = "supported"
@@ -306,6 +332,229 @@ def _judge_claim(claim: dict[str, Any], base: Measurement, trending: bool | None
     return UNKNOWN, "; ".join(parts + ["not enough history to test the direction"])
 
 
+def _measurement_shortfall(m: Measurement) -> str | None:
+    """Why a three-state measurement cannot support a decision, or None.
+
+    `None` means the arithmetic already decided this claim, so nobody — not the
+    agent, and not Jev — needs to be asked about it.
+    """
+    if m.state in (SUPPORTED, WEAKENING, BROKEN):
+        return None
+    if m.metric is None:
+        return "no single reported metric represents what the thesis claims"
+    if m.observed_date is None:
+        return f"the API reports no {m.metric} for this company"
+    return None
+
+
+def _cadence_of(measurement: Measurement, thesis: dict[str, Any]) -> str | None:
+    for claim in thesis.get("claims") or []:
+        if claim.get("id") == measurement.claim_id:
+            return claim.get("cadence")
+    return None
+
+
+def _represented_fields(measurements: list[Measurement],
+                        evidence: list[dict[str, Any]]) -> list[str]:
+    """The literal metric names and observed values an agent may cite.
+
+    The guardrail is only as good as this list: anything missing here is a false
+    positive waiting for an honest sentence. So it deliberately over-includes —
+    the field name, every analyst alias for that field, and the formatted value.
+    """
+    fields: set[str] = set()
+    for measurement in measurements:
+        if measurement.metric:
+            fields.add(measurement.metric)
+            for alias, target in metrics.METRIC_ALIASES.items():
+                if target == measurement.metric:
+                    fields.add(alias)
+                    fields.add(target)
+        if measurement.observed_value is not None:
+            fields.add(metrics.describe(measurement.observed_value))
+    for row in evidence:
+        if row.get("metric"):
+            fields.add(str(row["metric"]))
+        if row.get("value") is not None:
+            fields.add(str(row["value"]))
+    return sorted(fields)
+
+
+# --------------------------------------------------------------------------
+# Jev — the decision layer
+# --------------------------------------------------------------------------
+def _decide_with_jev(thesis: dict[str, Any], measurements: list[Measurement],
+                     brief: str, jev: Any, emit=None,
+                     transcript: list[str] | None = None) -> dict[str, dict[str, Any]]:
+    """Ask Jev for a state on every claim the arithmetic could not settle.
+
+    Returns {claim_id: {"state": ..., "rationale": ..., "confidence": ...,
+    "probabilities": ...}}, plus "__decidable__" naming the one extra fact that
+    would change the answer. An empty dict means nothing was sent or the gateway
+    failed, and the caller keeps the agent as decider.
+    """
+    if jev is None:
+        return {}
+
+    settleable = [m for m in measurements
+                  if _measurement_shortfall(m) is None
+                  and _cadence_of(m, thesis) in _SETTLEABLE_CADENCES][:MAX_JEV_CLAIMS]
+    if not settleable:
+        return {}
+
+    questions: dict[str, dict[str, Any]] = {}
+    for index, measurement in enumerate(settleable):
+        questions[f"claim_{index}"] = {
+            "type": "choice",
+            "instructions": "Given the measured evidence for this claim, what is its state?",
+            "criteria": {
+                "supported": "the measured numbers and context clearly still support the claim",
+                "weakening": ("the claim is not contradicted, but the trend or the context no "
+                              "longer supports it cleanly"),
+                "broken": "the measured numbers contradict the claim",
+                "unknown": "the evidence cannot settle this claim either way",
+            },
+        }
+    # An extra call here is not free: it decides whether the agent loop runs at
+    # all, and therefore whether a check takes one second or three minutes.
+    questions["decidable"] = {
+        "type": "choice",
+        "instructions": ("Which single additional fact would most change these judgements, and can "
+                         "it be obtained from a market-data API at all?"),
+        "criteria": {
+            "none": "no further data would change the judgements",
+            "context:market": "what the whole market did over the same window",
+            "context:sector": "what this company's sector and peers did",
+            "insider": "whether company insiders have been buying or selling",
+            "news": "whether there is dated news that explains the move",
+            "corporate_action": ("whether the price move is a split, rights issue or dividend, or "
+                                 "the stock was suspended"),
+            "external": "the deciding fact is outside market data and no API call can settle it",
+        },
+    }
+
+    state = brief + "\n\nDecide the claims above. Answer only from this evidence."
+    try:
+        decision = jev.ask(state, questions)
+    except Exception as err:  # noqa: BLE001 — the decision layer is never fatal
+        if emit:
+            emit("jev_error", {"detail": str(err)[:200]})
+        if transcript is not None:
+            transcript.append(f"\n_Jev unavailable: {err}_")
+        return {}
+
+    out: dict[str, dict[str, Any]] = {}
+    for index, measurement in enumerate(settleable):
+        answer = decision.answers.get(f"claim_{index}")
+        if answer is None:
+            continue
+        out[measurement.claim_id] = {
+            "state": str(answer.value),
+            "rationale": (f"Jev decided {answer.value} over this claim's measured evidence "
+                          f"(confidence {answer.confidence:.2f})"
+                          if answer.confidence is not None
+                          else f"Jev decided {answer.value} over this claim's measured evidence"),
+            "confidence": answer.confidence,
+            "probabilities": dict(answer.probabilities),
+        }
+
+    decidable = decision.answers.get("decidable")
+    out["__decidable__"] = str(decidable.value) if decidable else None
+
+    if transcript is not None:
+        rows = [row for row in decision.rows()]
+        transcript.append(
+            "\n## Decision (Jev)\n\n"
+            f"{len(settleable)} claim question(s) and 1 routing question, answered in "
+            f"{decision.seconds:.2f}s by `{decision.model}` "
+            f"(input {decision.usage.get('input_tokens', '?')} tokens). "
+            "Typed answers, not parsed prose.\n\n```json\n"
+            + json.dumps(rows, ensure_ascii=False, indent=2) + "\n```"
+        )
+    if emit:
+        emit("jev", {"claims": len(settleable), "seconds": round(decision.seconds, 2),
+                     "model": decision.model, "decidable": out.get("__decidable__")})
+    return out
+
+
+def _cited_numbers(text: str, limit: int = 40) -> list[str]:
+    """Every number-looking token in a report, deduped, in order.
+
+    Extracting candidates in code rather than asking the model to notice them is
+    what makes the guardrail reliable: the model's remaining job is the easy,
+    positively-framed one — pick the number that no evidence supports — instead
+    of the unreliable one — search a paragraph for something that is absent.
+    Measured: a negated Nul question scored an honest sentence with no numbers at
+    all at 0.76 and one citing only evidence at 0.89, so nothing separated.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for match in CITED_NUMBER_RE.finditer(CURRENCY_PREFIX_RE.sub("", text or "")):
+        token = match.group(0).strip()
+        if not any(ch.isdigit() for ch in token) or token in seen:
+            continue
+        seen.add(token)
+        out.append(token)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _check_report(report: str, represented: list[str], sentences: list[str],
+                  jev: Any) -> dict[str, Any]:
+    """Ask Jev whether the agent's prose cites numbers the evidence does not contain.
+
+    This is the enforcement of a prompt rule that was previously only a wish:
+    `SYSTEM` says not to invent figures, and a run still produced "NIM <6%".
+    """
+    blank: dict[str, Any] = {"flagged": False, "score": None, "unrepresented": [],
+                             "checked": []}
+    if not report or jev is None or not represented:
+        # A guardrail with no anchors cannot tell a fabrication from a legitimate
+        # sentence, and a false accusation is worse than no accusation.
+        return blank
+
+    candidates = _cited_numbers(report)
+    if not candidates:
+        # Nothing to check, so nothing to pay for.
+        return blank
+
+    questions = {
+        "unsupported": {
+            "type": "choice",
+            "instructions": ("Which one of these numbers taken from the report is not stated "
+                             "anywhere in the evidence sentences?"),
+            "criteria": dict(
+                [("none", "every number in the report is stated in the evidence")]
+                + [(candidate, f"the report says {candidate}, which is absent from the evidence")
+                   for candidate in candidates]
+            ),
+        },
+    }
+    state = ("REPORT TO CHECK:\n" + report[:6000]
+             + "\n\nREPRESENTED FIELDS (the only fields the evidence covers):\n"
+             + ", ".join(represented[:120])
+             + "\n\nEVIDENCE SENTENCES:\n"
+             + ("\n".join(sentences[:40])[:4000] or "(none)"))
+    try:
+        decision = jev.ask(state, questions)
+    except Exception as err:  # noqa: BLE001 — a broken guardrail must not block a check
+        return {**blank, "candidates": candidates, "error": str(err)[:200]}
+
+    answer = decision.answers.get("unsupported")
+    if answer is None or str(answer.value) == "none":
+        return {**blank, "checked": candidates}
+
+    confidence = float(answer.confidence) if answer.confidence is not None else None
+    flagged = confidence is None or confidence >= GUARDRAIL_THRESHOLD
+    return {
+        "flagged": flagged,
+        "score": confidence,
+        "unrepresented": [str(answer.value)] if flagged else [],
+        "checked": candidates,
+    }
+
+
 def rollup(measurements: list[Measurement]) -> tuple[str, str]:
     """One status from many claim states, with the reason spelled out."""
     states = [m.state for m in measurements] or [UNKNOWN]
@@ -325,26 +574,25 @@ def rollup(measurements: list[Measurement]) -> tuple[str, str]:
 # --------------------------------------------------------------------------
 SYSTEM = """You are the analyst behind Thesis Radar. A user has written down why they own a stock, and you are checking whether that reasoning still survives contact with the data.
 
-Your job is NOT to agree with the thesis. It is to find out whether it is still true, and to say plainly when it is not. "This claim no longer holds, because X" is the most valuable thing you can produce. Do not restate the numbers you were given; they are already measured. Your value is context:
+The claims that are already decided have been decided from measured numbers, and that decision is not yours to revisit. Your one job is context: find out whether the surrounding facts change how those decisions should be read.
 
-- Is the move in the company, or in the whole sector or market? Use market_context and sector_context. A stock that fell 3% on a day the index fell 3% has told you nothing about that company.
-- Is the price action real, or the mechanical effect of a split, rights issue or dividend? Is the stock suspended? A halt pins the last close and manufactures a fake trend. Use corporate_action_check and what_changed.
-- Is the money still moving the way the position assumes? Use flow_delta and insider_activity.
-- Does the written story have a dated cause? Use news_search. If the move happened on a day with no news, the story is probably wrong.
+- Is the move in the company, or in the whole sector or market? A stock that fell 3% on a day the index fell 3% has told you nothing about that company.
+- Is the price action real, or the mechanical effect of a split, rights issue or dividend? Is the stock suspended? A halt pins the last close and manufactures a fake trend.
+- Is the money still moving the way the position assumes?
+- Does the written story have a dated cause? If the move happened on a day with no news, the story is probably wrong.
 - Is a missing number actually missing? If the API does not report what the thesis leans on, say so rather than reasoning around it.
 
 Rules:
-- ALWAYS call `evidence_ledger` first. It costs 0 credits and tells you whether this name has been examined before.
-- ALWAYS call `what_changed` before anything else paid: it is one call that returns price, foreign flow, insider filings, news and corporate actions together.
-- Prefer cheap evidence first, and do not call the same tool twice with the same arguments.
+- Do NOT restate the decided claims and do NOT dispute them.
+- ALWAYS call `what_changed` first; it is one call returning price, foreign flow, insider filings, news and corporate actions.
+- Then call at most ONE more tool, chosen to answer the question you were asked.
 - `market_context` and `news_search` take NO symbol argument — they are market-wide. Passing one will fail.
-- Every conclusion must name the evidence it rests on.
-- Never introduce a number, ratio or metric that no tool returned. If a figure (a NIM percentage, an NPL ratio) was not in a tool result, you cannot cite it — say the data does not settle that point instead.
-- If the data cannot settle something, say so. An honest "cannot tell from here" beats a confident guess, and is a valid verdict.
+- Never introduce a number, ratio or metric that no tool returned. "NIM below 6%" is not allowed.
+- If the data cannot settle something, say so. An honest "cannot tell from here" beats a confident guess.
 
-You have at most 4 tool calls. Spend them on the two or three that would actually change your mind, then conclude. Keep each reply short — one or two sentences of reasoning, then either the tool block or the verdict block, never both.
+You have at most 2 tool calls. Spend them well, then reply with only the JSON block.
 
-When you have enough — or when you have spent your budget — end your reply with exactly one JSON block and no other text after it:
+When you have enough — or when you have spent your budget — end your reply with exactly one JSON block and no other text after it. `claim_states` is optional: include it ONLY for a claim you were told could not be measured, and never to overrule a decided one.
 
 {"claim_states": [{"claim_id": "...", "state": "supported|weakening|broken|unknown", "rationale": "..."}],
  "changes": [{"kind": "data|context|risk", "text": "what is different since the last check", "magnitude": "e.g. -8% YoY"}],
@@ -400,8 +648,20 @@ def _results_message(step: tools.Tool | None, name: str, payload: dict[str, Any]
 
 def run(thesis_id: str, *, engine: Engine, store: Store, sectors: Sectors,
         symbol_override: str | None = None, max_rounds: int = MAX_TOOL_ROUNDS,
-        on_event=None) -> dict[str, Any]:
-    """Measure one thesis, let the agent argue about it, persist everything."""
+        on_event=None, jev: Any = None) -> dict[str, Any]:
+    """Measure one thesis, decide it, argue about the context, persist everything.
+
+    Three layers, in order of authority:
+
+    1. **code** measures the reported numbers;
+    2. **Jev** decides what those numbers mean for each claim, and guards the
+       prose that follows;
+    3. **the engine** supplies context prose, and decides only what neither of
+       the first two could.
+
+    Passing `jev` injects the decision client (tests use a stub); omitting it
+    resolves the configured one, or none when the decision layer is unavailable.
+    """
     thesis = store.get_thesis(thesis_id)
     if thesis is None:
         raise ValueError(f"no thesis {thesis_id}")
@@ -410,6 +670,7 @@ def run(thesis_id: str, *, engine: Engine, store: Store, sectors: Sectors,
 
     emit = on_event or (lambda *a, **k: None)
     engine_meta = engine.identify()
+    decider = jev if jev is not None else jev_from_settings()
 
     # Resolve the watermark before the check row exists, so the row records the
     # date the agent actually looked forward from. Without it the change strip
@@ -441,6 +702,23 @@ def run(thesis_id: str, *, engine: Engine, store: Store, sectors: Sectors,
         brief = _thesis_brief(thesis, measurements, watermark)
         transcript.append("## Thesis brief\n\n```\n" + brief + "\n```")
 
+        # The decision comes before the agent runs, and it is what decides
+        # whether the agent runs at all. Asking Jev costs about a second; asking
+        # the engine costs about a minute per turn.
+        jev_states = _decide_with_jev(thesis, measurements, brief, decider,
+                                      emit=emit, transcript=transcript)
+        decidable = jev_states.pop("__decidable__", None)
+        shortfall_ids = {m.claim_id for m in measurements
+                         if _measurement_shortfall(m) is not None}
+        fully_decided = len(jev_states) == len(measurements)
+        needs_agent = (not fully_decided) or (decidable not in (None, "none"))
+        loop_rounds = 0 if not needs_agent else min(max_rounds, TOOL_CALLS_WHEN_ASSISTED)
+        if not needs_agent:
+            transcript.append(
+                "\n_The agent loop was skipped: every claim was decided from measured data, and "
+                "Jev reports no further available fact that would change those decisions._\n")
+            emit("skipped", {"reason": "every claim decided; no further data would change it"})
+
         # The free read is done for the agent rather than trusted to it: it costs
         # no credits, it is always relevant, and making it conditional would let a
         # paid call happen before the product's own memory was consulted.
@@ -458,6 +736,13 @@ def run(thesis_id: str, *, engine: Engine, store: Store, sectors: Sectors,
         messages: list[dict[str, Any]] = [
             {"role": "user", "content": brief + "\n\nStart investigating."},
         ]
+        if needs_agent and shortfall_ids:
+            messages[0]["content"] += (
+                "\n\nThe following claim(s) could NOT be measured and are yours to settle with "
+                "tools and judgement: "
+                + ", ".join(shortfall_ids)
+                + ". Every other claim is already decided — do not restate or dispute it."
+            )
 
         # A repeated identical call is pure waste: the answer is already in the
         # transcript. The loop recognises it, refuses to spend the credit, and
@@ -466,9 +751,10 @@ def run(thesis_id: str, *, engine: Engine, store: Store, sectors: Sectors,
 
         verdict: dict[str, Any] | None = None
         engine_error: str | None = None
+        last_text = ""
         native = getattr(engine, "protocol", "prompt") == "native"
 
-        for round_no in range(max_rounds):
+        for round_no in range(loop_rounds):
             remaining = sectors.budget.remaining
             if remaining is not None and remaining <= 0:
                 transcript.append(f"\n_Credit budget exhausted after {round_no} round(s)._")
@@ -484,11 +770,13 @@ def run(thesis_id: str, *, engine: Engine, store: Store, sectors: Sectors,
             parsed = extract_json(turn.text)
             if parsed and ("claim_states" in parsed or "summary" in parsed):
                 verdict = parsed
+                last_text = turn.text
                 transcript.append(f"\n## Verdict\n\n```json\n"
                                   f"{json.dumps(parsed, ensure_ascii=False, indent=2)}\n```")
                 break
 
             if not turn.calls:
+                last_text = turn.text
                 transcript.append(f"\n## Round {round_no + 1}\n\n{turn.text}\n")
                 messages.append({"role": "assistant", "content": turn.text or "(no output)"})
                 messages.append({"role": "user", "content":
@@ -537,17 +825,95 @@ def run(thesis_id: str, *, engine: Engine, store: Store, sectors: Sectors,
                 messages.append({"role": "assistant", "content": turn.text or f"(calling {name})"})
                 messages.append({"role": "user", "content": _results_message(None, name, outcome)})
 
-        # -- persist ---------------------------------------------------------
-        final_states = _merge_states(measurements, verdict)
+        # -- decide ----------------------------------------------------------
+        # Jev's answer stands for every claim it decided; a measurement that code
+        # settled stands; the engine may only touch a claim neither of them could.
+        final_states: dict[str, dict[str, Any]] = dict(jev_states)
+        agent_states = _merge_states(measurements, verdict)
+        overrule_notes: list[str] = []
+        for claim_id, override in agent_states.items():
+            measurement = next((m for m in measurements if m.claim_id == claim_id), None)
+            if measurement is None:
+                continue
+            measured_state = final_states.get(claim_id, {}).get("state", measurement.state)
+            if override.get("state") == measured_state:
+                continue
+            if _measurement_shortfall(measurement) is None and claim_id in jev_states:
+                # Refused: the claim was decided from measured data, and prose
+                # does not get to overrule arithmetic.
+                overrule_notes.append(
+                    f"{measurement.text}: engine proposed {override['state']}, "
+                    f"refused in favour of the measured/decided {measured_state}"
+                )
+                continue
+            final_states[claim_id] = override
+
+        # -- guard the prose the engine wrote --------------------------------
+        represented = _represented_fields(measurements, measurement_evidence)
+        guardrail = {"flagged": False, "score": None, "unrepresented": [], "checked": []}
+        if needs_agent and verdict is not None:
+            # Only the prose is checked. The verdict JSON carries internal
+            # numbers — probabilities, confidence — that are outputs of the
+            # system, not claims about the company; feeding them in produced a
+            # false positive on a real run ("cites 0.2", which was a probability).
+            report = (last_text or "").strip()
+            if not report:
+                report = json.dumps(verdict.get("summary") or "", ensure_ascii=False)
+            guardrail = _check_report(
+                report, represented,
+                [e["note"] for e in measurement_evidence if e.get("note")] + [brief],
+                decider,
+            )
+            emit("guardrail", {"flagged": guardrail["flagged"], "score": guardrail["score"],
+                               "unrepresented": guardrail["unrepresented"],
+                               "checked": len(guardrail.get("checked") or [])})
+            transcript.append(
+                "\n## Guardrail (Jev)\n\n"
+                f"Checked {len(guardrail.get('checked') or [])} cited number(s) against the "
+                f"evidence. "
+                + (f"**Flagged**: cites `{guardrail['unrepresented']}` "
+                   f"(confidence {guardrail['score']}) — not present in the evidence."
+                   if guardrail["flagged"] else "No unsupported figure found.")
+            )
+
+        if engine_error:
+            decision_path = "measurement"
+        elif not needs_agent and jev_states:
+            decision_path = "jev"
+        elif guardrail.get("flagged"):
+            decision_path = "agent_unverified"
+        elif jev_states:
+            decision_path = "jev+agent"
+        else:
+            decision_path = "agent"
+
         final_status, final_reason = _status_from_states(final_states, status)
-        confidence = _confidence(verdict, final_states, engine_error is not None)
+        if overrule_notes:
+            final_reason += "; " + "; ".join(overrule_notes)
+        if guardrail.get("flagged"):
+            if final_status == "intact":
+                final_status = "weakened"
+                final_reason += ("; status capped at weakened: the prose cites a figure the "
+                                 "evidence does not contain")
+            store.add_evidence(check_id, {
+                "symbol": thesis["symbol"],
+                "metric": "guardrail.unrepresented_numbers",
+                "value": f"{guardrail['score']:.2f}" if guardrail.get("score") is not None else "flag",
+                "as_of": last_available_day(), "endpoint": "tool:jev",
+                "params": {"flagged": guardrail["unrepresented"]},
+                "note": "Jev Choice: the report cites numbers absent from the evidence",
+            }, -1)
+
+        confidence = _confidence(verdict, final_states, engine_error is not None,
+                                 jev_states=jev_states, decision_path=decision_path)
 
         for m in measurements:
             row = m.to_row()
             override = final_states.get(m.claim_id)
             if override and override.get("state") and override["state"] != m.state:
+                source = "Jev" if m.claim_id in jev_states else "Agent"
                 row["rationale"] = (
-                    f"Agent overruled the measurement ({m.state} → {override['state']}): "
+                    f"{source} overruled the measurement ({m.state} → {override['state']}): "
                     f"{override.get('rationale') or 'no reason given'}"
                 )
                 row["state"] = override["state"]
@@ -556,6 +922,17 @@ def run(thesis_id: str, *, engine: Engine, store: Store, sectors: Sectors,
         ordinal = 0
         for item in watermark_evidence + measurement_evidence:
             store.add_evidence(check_id, item, ordinal)
+            ordinal += 1
+        for claim_id, state in jev_states.items():
+            store.add_evidence(check_id, {
+                "symbol": thesis["symbol"], "metric": f"jev.claim_state",
+                "value": state.get("state"),
+                "as_of": last_available_day(), "endpoint": "tool:jev",
+                "params": {"claim_id": claim_id,
+                           "confidence": state.get("confidence"),
+                           "probabilities": state.get("probabilities")},
+                "note": "Jev decided this claim from the measured evidence",
+            }, ordinal)
             ordinal += 1
         for step in steps:
             if isinstance(step.get("result"), dict):
@@ -580,12 +957,16 @@ def run(thesis_id: str, *, engine: Engine, store: Store, sectors: Sectors,
             if isinstance(change, dict) and change.get("text"):
                 store.add_change(thesis_id, change, i, check_id=check_id)
 
-        summary = _summary(verdict, rollup_reason, final_reason, engine_error)
+        summary = _summary(verdict, rollup_reason, final_reason, engine_error,
+                           decision_path=decision_path, jev_states=jev_states,
+                           guardrail=guardrail)
         transcript_path = _write_transcript(check_id, thesis, transcript, steps, engine_meta)
 
         store.finish_check(check_id, verdict=final_status, confidence=confidence,
                            summary=summary, credits=sectors.budget.spent,
-                           tool_calls=len(steps), transcript_path=str(transcript_path))
+                           tool_calls=len(steps), transcript_path=str(transcript_path),
+                           decision_path=decision_path,
+                           confidence_source=_confidence_source(jev_states, decision_path))
 
         previous_status = thesis.get("status")
         store.set_status(thesis_id, final_status, confidence, watermark, run_id)
@@ -617,7 +998,12 @@ def run(thesis_id: str, *, engine: Engine, store: Store, sectors: Sectors,
             "summary": summary,
             "engine": engine_meta,
             "engine_error": engine_error,
+            "decision_path": decision_path,
+            "guardrail": guardrail,
+            "jev_claims": len(jev_states),
+            "decidable": decidable,
             "measurements": [m.to_row() for m in measurements],
+            "claims_final": [_final_row(m, final_states, jev_states) for m in measurements],
             "agent_states": final_states,
             "steps": steps,
             "credits": sectors.budget.spent,
@@ -650,6 +1036,25 @@ def _merge_states(measurements: list[Measurement],
     return out
 
 
+def _final_row(measurement: Measurement, final_states: dict[str, dict[str, Any]],
+               jev_states: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """A claim as it was finally decided, with the layer that decided it.
+
+    The measurement's own state is not the answer once a decision layer has
+    spoken, so reporting `to_row()` here would show a verdict the product did not
+    actually reach.
+    """
+    row = measurement.to_row()
+    decided = final_states.get(measurement.claim_id) or {}
+    if decided.get("state"):
+        row["measured_state"] = measurement.state
+        row["state"] = decided["state"]
+    row["decided_by"] = ("jev" if measurement.claim_id in jev_states
+                         else ("agent" if decided.get("state")
+                               and decided["state"] != measurement.state else "measurement"))
+    return row
+
+
 def _status_from_states(states: dict[str, dict[str, Any]], measured_status: str) -> tuple[str, str]:
     if not states:
         return measured_status, "status came from measurement only"
@@ -664,29 +1069,70 @@ def _status_from_states(states: dict[str, dict[str, Any]], measured_status: str)
 
 
 def _confidence(verdict: dict[str, Any] | None, states: dict[str, dict[str, Any]],
-                errored: bool) -> float:
+                errored: bool, *, jev_states: dict[str, dict[str, Any]] | None = None,
+                decision_path: str | None = None) -> float:
+    """How much the verdict deserves to be trusted, and where that came from.
+
+    A decided claim's confidence is Jev's, averaged. A rule-derived fallback is
+    capped when the only thing behind the verdict is unguarded prose, because
+    "the model said so" is not a measurement.
+    """
     if errored:
         return 0.0
+    if jev_states and decision_path in ("jev", "jev+agent"):
+        values = [float(s["confidence"]) for s in jev_states.values()
+                  if isinstance(s.get("confidence"), (int, float))]
+        if values:
+            return round(sum(values) / len(values), 2)
+
     value = (verdict or {}).get("confidence")
     try:
         out = float(value)
     except (TypeError, ValueError):
-        # No stated confidence: derive a conservative one from how much was settled.
         if not states:
             return 0.35
         settled = sum(1 for s in states.values() if s["state"] != UNKNOWN)
-        return round(0.4 + 0.5 * settled / len(states), 2)
+        out = round(0.4 + 0.5 * settled / len(states), 2)
+    if decision_path in ("agent", "agent_unverified"):
+        # Unguarded or demonstrably unverifiable prose is not a measurement, so it
+        # cannot carry the confidence a measurement would. `agent_unverified` was
+        # the hole here: the guardrail had already caught a fabricated figure, and
+        # the run still carried the model's own 0.95 into the stored check.
+        out = min(out, CONFIDENCE_CEILING_WHEN_UNGUARDED)
     return max(0.0, min(1.0, out))
 
 
+def _confidence_source(jev_states: dict[str, dict[str, Any]] | None,
+                       decision_path: str | None) -> str:
+    """A one-word label for where the number above came from."""
+    if decision_path in ("jev", "jev+agent") and jev_states:
+        return "jev"
+    if decision_path in ("agent", "agent_unverified"):
+        return "prose"
+    return "rule"
+
+
 def _summary(verdict: dict[str, Any] | None, rollup_reason: str,
-             final_reason: str, engine_error: str | None) -> str:
+             final_reason: str, engine_error: str | None,
+             *, decision_path: str | None = None,
+             jev_states: dict[str, dict[str, Any]] | None = None,
+             guardrail: dict[str, Any] | None = None) -> str:
+    prefix = ""
+    if guardrail and guardrail.get("flagged"):
+        score = guardrail.get("score")
+        prefix = (f"⚠︎ cites a figure the evidence does not contain"
+                  f"{f' ({score:.2f})' if isinstance(score, (int, float)) else ''} "
+                  f"[{', '.join(guardrail.get('unrepresented') or [])}]. ")
     if engine_error:
         return (f"Measured without an agent: {rollup_reason}. The agent was unavailable "
                 f"({engine_error}), so the interpretation is not attempted.")
     if verdict and verdict.get("summary"):
-        return str(verdict["summary"])[:2000]
-    return f"{final_reason}. Measurements: {rollup_reason}."
+        return prefix + str(verdict["summary"])[:2000]
+    if decision_path == "jev" and jev_states:
+        held = sum(1 for s in jev_states.values() if s.get("state") == SUPPORTED)
+        return prefix + (f"{final_reason}. {held} of {len(jev_states)} claim(s) still hold; "
+                         f"decided from measured data with no agent turn needed.")
+    return prefix + f"{final_reason}. Measurements: {rollup_reason}."
 
 
 def _write_transcript(check_id: str, thesis: dict[str, Any], transcript: list[str],
