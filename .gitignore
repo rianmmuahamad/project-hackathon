@@ -1,0 +1,22 @@
+# Secrets — never committed
+.env
+
+# Runtime state (evidence, transcripts, ledgers)
+.thesisradar/
+
+# Front end — the BUILT output in web/dist is committed on purpose: judges get a
+# repository, not a setup session, and `thesisradar serve` must run with no Node
+# installed.
+web/node_modules/
+web/.vite/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/

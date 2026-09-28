@@ -1,0 +1,6 @@
+# Server layer only. The agent core, the Sectors client and the store are
+# standard-library Python on purpose — they run in a bare interpreter, inside
+# Hermes' managed venv and in CI with no drift.
+fastapi>=0.110
+uvicorn>=0.27
+httpx>=0.27
