@@ -19,6 +19,7 @@ export function ComposePage({ onCreated }: { onCreated: (id: string) => void }) 
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ id: string; split: Decomposition; credits: number } | null>(null);
   const [drafts, setDrafts] = useState<Draft[]>([]);
+  const [skipped, setSkipped] = useState<Array<{ symbol: string; reason: string }>>([]);
   const [draftBusy, setDraftBusy] = useState(false);
   const [draftNote, setDraftNote] = useState<string | null>(null);
 
@@ -44,6 +45,7 @@ export function ComposePage({ onCreated }: { onCreated: (id: string) => void }) 
     try {
       const payload = await api.draft("banks", 3);
       setDrafts(payload.drafts);
+      setSkipped(payload.skipped ?? []);
       setDraftNote(`${payload.note} (${payload.credits} credits)`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -177,6 +179,23 @@ export function ComposePage({ onCreated }: { onCreated: (id: string) => void }) 
                   </button>
                 </div>
               ))}
+            </div>
+          )}
+
+          {skipped.length > 0 && (
+            <div className="banner warn" style={{ marginTop: 12, marginBottom: 0 }}>
+              <strong>Tidak dibuatkan tesis:</strong>
+              <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                {skipped.map((item) => (
+                  <li key={item.symbol}>
+                    <span className="mono">{item.symbol}</span> — {item.reason}
+                  </li>
+                ))}
+              </ul>
+              <div className="dim" style={{ marginTop: 6 }}>
+                Penjaga yang sama yang dipakai saat memeriksa tesis juga berlaku saat menulisnya.
+                Menyusun tesis dari seri data yang patah akan mencuci kesalahan itu ke dalam kalimat Anda.
+              </div>
             </div>
           )}
         </div>

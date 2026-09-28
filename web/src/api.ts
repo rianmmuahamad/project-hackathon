@@ -6,7 +6,7 @@
 import type {
   CheckDetail,
   Decomposition,
-  Draft,
+  DraftResponse,
   Job,
   Notification,
   QueueRow,
@@ -58,7 +58,7 @@ export const api = {
     request<{ notifications: Notification[] }>(`/api/notifications?unread_only=${unreadOnly}`),
   job: () => request<{ job: Job | null }>("/api/job"),
   draft: (subsector: string, count: number) =>
-    request<{ sub_sector: string; drafts: Draft[]; credits: number; note: string }>(
+    request<DraftResponse>(
       `/api/draft?subsector=${encodeURIComponent(subsector)}&count=${count}`,
     ),
 

@@ -246,6 +246,9 @@ def cmd_draft(args) -> int:
         print(f"\n{draft['symbol']} — {draft.get('company_name') or ''}")
         print(f"  {draft['statement']}")
         print(f"  {json.dumps(draft['evidence'], ensure_ascii=False)}")
+    for item in out.get("skipped") or []:
+        print(f"\n{item['symbol']} — tidak dibuatkan tesis")
+        print(f"  {item['reason']}")
     return 0
 
 

@@ -274,6 +274,7 @@ class Service:
         rows = budget.screener(where=f"sub_sector = '{sub_sector}'",
                                order_by="-market_cap", limit=12)
         drafts: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = []
         for row in rows:
             symbol = (row.get("symbol") or "").removesuffix(".JK")
             if not symbol:
@@ -287,35 +288,53 @@ class Service:
             nii = metric_mod.series_of(quarterly, "net_interest_income")
             if len(loan) < 5:
                 continue
-            loan_delta = metric_mod.pct_change(loan[-1]["value"], loan[-5]["value"])
-            nii_delta = (metric_mod.pct_change(nii[-1]["value"], nii[-5]["value"])
-                         if len(nii) >= 5 else None)
-            if loan_delta is None:
-                continue
-            direction = "tumbuh" if loan_delta > 0 else "menyusut"
-            statement = (
-                f"Kredit {symbol} {direction} {abs(loan_delta) * 100:.1f}% YoY "
-                f"(kuartal {loan[-1]['date']})"
-            )
-            if nii_delta is not None:
-                statement += (f", pendapatan bunga bersih "
-                              f"{'naik' if nii_delta > 0 else 'turun'} "
-                              f"{abs(nii_delta) * 100:.1f}% YoY")
-            drafts.append({
-                "symbol": symbol,
-                "company_name": row.get("company_name"),
-                "statement": statement,
-                "horizon": horizon,
-                "evidence": {
-                    "gross_loan_delta_pct": round(loan_delta * 100, 2),
-                    "nii_delta_pct": None if nii_delta is None else round(nii_delta * 100, 2),
-                    "as_of": loan[-1]["date"],
-                },
-                "generated": True,
-            })
+
+            # A draft must obey the same guard the measurement obeys. Writing
+            # "kredit menyusut 1.5% YoY" from a series that breaks is exactly the
+            # error this product exists to prevent — and a drafter that skipped
+            # the guard would launder it into the user's own words.
+            for series, name in ((loan, "gross_loan"), (nii, "net_interest_income")):
+                found = metric_mod.break_index(series, name)
+                if found:
+                    index, jump = found
+                    skipped.append({
+                        "symbol": symbol,
+                        "reason": (f"{name} moves {jump * 100:+.1f}% in one quarter "
+                                   f"({series[index - 1]['date']} → {series[index]['date']}), so the "
+                                   f"reported series is inconsistent and no thesis is drafted from it"),
+                    })
+                    break
+            else:
+                loan_delta = metric_mod.pct_change(loan[-1]["value"], loan[-5]["value"])
+                nii_delta = (metric_mod.pct_change(nii[-1]["value"], nii[-5]["value"])
+                             if len(nii) >= 5 else None)
+                if loan_delta is None:
+                    continue
+                direction = "tumbuh" if loan_delta > 0 else "menyusut"
+                statement = (
+                    f"Kredit {symbol} {direction} {abs(loan_delta) * 100:.1f}% YoY "
+                    f"(kuartal {loan[-1]['date']})"
+                )
+                if nii_delta is not None:
+                    statement += (f", pendapatan bunga bersih "
+                                  f"{'naik' if nii_delta > 0 else 'turun'} "
+                                  f"{abs(nii_delta) * 100:.1f}% YoY")
+                drafts.append({
+                    "symbol": symbol,
+                    "company_name": row.get("company_name"),
+                    "statement": statement,
+                    "horizon": horizon,
+                    "evidence": {
+                        "gross_loan_delta_pct": round(loan_delta * 100, 2),
+                        "nii_delta_pct": None if nii_delta is None else round(nii_delta * 100, 2),
+                        "as_of": loan[-1]["date"],
+                    },
+                    "generated": True,
+                })
             if len(drafts) >= count:
                 break
-        return {"sub_sector": sub_sector, "drafts": drafts, "credits": budget.budget.spent,
+        return {"sub_sector": sub_sector, "drafts": drafts, "skipped": skipped,
+                "credits": budget.budget.spent,
                 "note": "Generated from reported metrics — confirm or edit before trusting it."}
 
     def watchlist(self, *, symbol: str | None = None, action: str = "list") -> dict[str, Any]:

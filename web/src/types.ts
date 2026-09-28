@@ -184,3 +184,12 @@ export interface Draft {
   evidence: Record<string, number | string | null>;
   generated: boolean;
 }
+
+/** The response of `GET /api/draft`, including the names it refused to draft. */
+export interface DraftResponse {
+  sub_sector: string;
+  drafts: Draft[];
+  skipped: Array<{ symbol: string; reason: string }>;
+  credits: number;
+  note: string;
+}
