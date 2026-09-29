@@ -148,6 +148,7 @@ python -m thesisradar check BBRI   # still measures, still scores, still persist
 | Routing between data sources | Jev decides *whether* the agent needs to run and what it should look for; the agent then chooses across price, foreign flow, broker desks, filings, news, corporate actions, suspensions, subsector peers and the index |
 | Memory or state management | `thesisradar/store.py` — theses, claims, checks, evidence, changes, watermarks, notifications, credit ledger |
 | Autonomous task execution | budget-bounded checks that run to a verdict unattended; a wall-clock schedule (`THESISRADAR_SCHEDULE_AT`) sweeps every watched thesis and emails the digest when something moved; duplicates are refused rather than re-paid |
+| Data-source breadth | one claim engine, two subject kinds: IDX equities (quarterly financials) and mining commodities (monthly price series, annual production), each measured on its own cadence |
 | Purpose-built interface | `web/` — a thesis workspace built for exactly one task, served by `thesisradar serve` |
 
 Hermes is used as an **engine, not as the product**, and that is enforced in code: one `Engine`
@@ -179,7 +180,8 @@ invented figures 0.64–1.00, and a sentence with no numbers at all skips the mo
 ```bash
 git clone https://github.com/rianmmuahamad/project-hackathon.git
 cd project-hackathon
-cp .env.example .env            # add your Sectors API key
+./install.sh                    # creates .env and installs fastapi + uvicorn
+# then add your Sectors API key to .env
 python -m thesisradar doctor    # environment, engines, credits
 
 python -m thesisradar new --symbol BBRI \
@@ -188,8 +190,13 @@ python -m thesisradar check BBRI
 python -m thesisradar serve     # dashboard on http://127.0.0.1:8788
 ```
 
-Python 3.11+ and the standard library for the core; `fastapi` + `uvicorn` for the server;
-Node 20+ only to rebuild the dashboard (the build output is committed).
+The agent core, the Sectors client and the store are standard-library Python — `doctor`, `new`,
+`queue`, `show` and the whole `tools/` suite run on a bare interpreter with no packages at all.
+Only `serve` needs `fastapi` + `uvicorn`, which `./install.sh` installs. Node 20+ is needed only to
+rebuild the dashboard (the build output is committed).
+
+With no `hermes` on PATH the product falls back to the `direct` engine; set `OPENAI_API_KEY` (and
+`THESISRADAR_ENGINE=direct` to force it).
 
 | Command | Cost | What it does |
 | --- | --- | --- |
@@ -199,6 +206,8 @@ Node 20+ only to rebuild the dashboard (the build output is committed).
 | `queue` | 0 | the worklist, worst first |
 | `show X` | 0 | one thesis with its evidence, history and transcript |
 | `draft` | ~6 | propose theses that the reported numbers already support |
+| `credits` | 0 | the credit ledger: spend per endpoint, and what the cache saved |
+| `commodities` | 0–1 | list the mining commodities the API prices, with coverage and staleness |
 | `digest [--send] [--all]` | 0 | build the pending digest without checking; `--send` emails it |
 | `scheduler [--when 08:00] [--days mon,...]` | per thesis | run the sweep unattended, on a wall clock, in the foreground |
 | `doctor` | ≤1 | environment, engine availability, email, credit ledger |
@@ -228,6 +237,27 @@ the problem. So the sweep runs itself:
 Email needs only `THESISRADAR_SMTP_HOST` and `THESISRADAR_SMTP_TO`; port `587` with STARTTLS is the
 default, `THESISRADAR_SMTP_TLS=0` switches to implicit TLS for port `465`, and an unauthenticated
 relay is fine — login happens only when both halves of a credential are set.
+
+### Beyond equities
+
+The Sectors API is not equities-only: 19 of its 74 documented paths are mining and commodities, and
+this repo now measures both kinds of subject with the same claim engine.
+
+```bash
+python -m thesisradar commodities     # 18 commodities, each with its coverage window
+python -m thesisradar new --subject commodity --symbol Nickel \
+  "Harga nikel naik terus dan produksi nasional tumbuh dua digit"
+python -m thesisradar check Nickel
+```
+
+A commodity price claim is tested against the **monthly** series and a production claim against the
+**annual** series — the cadence follows the subject, derived from `metrics.PERIODS_PER_YEAR`
+(`quarterly=4`, `commodity_price=12`, `production=1`). Two facts the product states out loud rather
+than hiding: 17 of the 18 commodities stop at `2026-02-15` while Gold and Silver reach
+`2026-09-01`, so staleness is recorded as evidence and shown in the picker; and `production_volume`
+carries an explicit discontinuity band of `(3.00, 1.00)` because real annual production swings
++167% to −85% year-on-year. A commodity name is verified against the API before anything is stored,
+so a typo cannot become a thesis whose every claim is silently `unknown`.
 
 ### Credit discipline
 
@@ -300,3 +330,10 @@ tools/          verification scripts
   reported is the `notifications` table, not the digest history.
 - Email is one-way and best-effort. There is no retry queue and no read receipt; a failed delivery
   is recorded in the run and the notifications stay in the dashboard, which is the source of truth.
+
+---
+
+## License
+
+MIT — see [`LICENSE`](LICENSE). The Sectors API data and terms are the operator's own; this repo
+ships a client, not the data.

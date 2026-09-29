@@ -2,17 +2,15 @@
    Thesis Radar — design system, and the Tailwind preflight it was written
    against.
 
-   Order matters and is deliberate: the design system FIRST, preflight LAST,
-   because that is the order the reference ends up with — it loads tailwind.js
-   from a <script> in <head>, so the Play CDN injects its preflight *after* the
-   inline <style> and the later rules win the ties. Two consequences the
-   reference actually exhibits, reproduced here rather than corrected:
+   Order matters here. The reference this was built against loads Tailwind's
+   Play CDN from a <script> in <head>, which injects its preflight *after* the
+   inline design-system <style>, so the later rules win the ties. Two visible
+   consequences are reproduced on purpose rather than corrected:
      * `body { line-height: inherit }` beats the design's 1.6, so text sits at
        1.5 (22.5px at 15px);
      * `a { color: inherit }` beats the design's blue, so links are white.
-   The design system's own rules still win wherever they are more specific.
-
-   Everything below is copied from the reference verbatim.
+   Do not reorder: the design system's own rules win only where they are more
+   specific, and swapping the two blocks changes the rendered page.
    ===================================================================== */
 
 
