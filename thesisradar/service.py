@@ -10,13 +10,15 @@ from __future__ import annotations
 import json
 import threading
 import time
+from collections import deque
 from datetime import date, timedelta
 from typing import Any
 
-from . import audit, engines, thesis as thesis_mod, tools, transcript
+from . import audit, engines, mailer, thesis as thesis_mod, tools, transcript
 from .config import settings
 from .engines import EngineUnavailable
 from .jev import describe
+from .schedule import Scheduler
 from .sectors import Budget, Sectors
 from .store import Store
 
@@ -35,6 +37,10 @@ class Service:
         self.store = store or Store()
         self._lock = threading.Lock()
         self._current: dict[str, Any] | None = None
+        # Digests are notifications, not records: the durable trail is the
+        # `notifications` table, so this history is in-memory and bounded.
+        self._digests: deque[dict[str, Any]] = deque(maxlen=20)
+        self._scheduler: Scheduler | None = None
 
     # -- jobs --------------------------------------------------------------
     def current_job(self) -> dict[str, Any] | None:
@@ -217,6 +223,104 @@ class Service:
         except Exception as err:  # noqa: BLE001
             self._end(error=f"{type(err).__name__}: {err}")
             raise
+
+    # -- scheduled checks --------------------------------------------------
+    def recent_digests(self, limit: int = 10) -> list[dict[str, Any]]:
+        """The digests this process produced, newest first."""
+        with self._lock:
+            return list(self._digests)[-limit:][::-1]
+
+    def _record_digest(self, **entry: Any) -> dict[str, Any]:
+        row = {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "checked": 0, "changed": 0,
+               "emailed": False, "subject": None, "error": None, **entry}
+        with self._lock:
+            self._digests.append(row)
+        return row
+
+    def _schedule_error(self, err: Exception) -> None:
+        """A failing sweep is visible, not silent — a dead timer is worse than none."""
+        self._record_digest(error=f"{type(err).__name__}: {err}")
+
+    def scheduled_check(self, *, email: bool = True) -> dict[str, Any]:
+        """Check every watched thesis, then email whatever changed.
+
+        Never raises: it runs from a timer thread with nobody to catch it. The
+        durable outcome is the notifications the sweep writes; the return value
+        only says whether the email left.
+        """
+        # Count unread rows before the sweep so the digest covers exactly what
+        # this run produced, even if earlier rows had already been read.
+        before = {n["id"] for n in self.store.list_notifications(limit=50)}
+        try:
+            summary = self.check_all(watch_only=True)
+        except JobBusy as err:
+            # A human is already running a sweep by hand; skip rather than queue.
+            return self._record_digest(error=f"skipped: {err}")
+        except Exception as err:  # noqa: BLE001 — the timer must outlive one bad sweep
+            return self._record_digest(error=f"{type(err).__name__}: {err}")
+        if not summary.get("checked"):
+            return self._record_digest(note="no watched theses")
+
+        fresh = mailer.survivors([n for n in self.store.list_notifications(limit=50)
+                                  if n["id"] not in before])
+        changed = summary.get("changed") or 0
+        symbols = [n.get("symbol") or "—" for n in fresh]
+        if not fresh:
+            return self._record_digest(checked=summary["checked"], changed=changed,
+                                       reason="nothing worth reporting")
+
+        when = f"{self.cfg.schedule_at} {self.schedule_state()['tz']}"
+        row = self._record_digest(checked=summary["checked"], changed=changed,
+                                  subject=mailer.digest_subject(len(fresh), symbols))
+        if not email:
+            row["reason"] = "email disabled for this run"
+            return row
+        if not self.cfg.email_configured:
+            row["reason"] = "email not configured"
+            return row
+        try:
+            out = mailer.send(row["subject"],
+                              mailer.digest_body(fresh, when=when, checked=summary["checked"]),
+                              cfg=self.cfg)
+        except Exception as err:  # noqa: BLE001 — best effort: the checks and the rows survive
+            # A dead relay degrades the product to what it was before the digest
+            # existed; it must never lose a sweep or kill the timer.
+            row["error"] = f"{type(err).__name__}: {err}"
+            return row
+
+        row["emailed"] = True
+        row["to"] = out["to"]
+        return row
+
+    def start_schedule(self, *, when: str | None = None, days: str | None = None) -> dict[str, Any]:
+        """Start the timer thread. Idempotent; a bad time is reported, not raised."""
+        if self._scheduler is not None and self._scheduler.running():
+            return self.schedule_state()
+        self._scheduler = Scheduler(
+            run=self.scheduled_check,
+            when=when or self.cfg.schedule_at,
+            days=days if days is not None else self.cfg.schedule_days,
+            on_error=self._schedule_error,
+        )
+        self._scheduler.start()
+        return self.schedule_state()
+
+    def stop_schedule(self) -> None:
+        if self._scheduler is not None:
+            self._scheduler.stop()
+
+    def schedule_state(self) -> dict[str, Any]:
+        """What the dashboard needs to show about the clock — no network, no I/O."""
+        sched = self._scheduler
+        return {
+            "next": sched.next_run().isoformat() if sched and sched.next_run() else None,
+            "when": sched.when if sched else self.cfg.schedule_at,
+            "days": sched.days if sched else self.cfg.schedule_days,
+            "tz": sched.tz if sched else "Asia/Jakarta",
+            "running": bool(sched and sched.running()),
+            "email_configured": self.cfg.email_configured,
+            "digests": self.recent_digests(5),
+        }
 
     # -- reads -------------------------------------------------------------
     def queue(self) -> list[dict[str, Any]]:

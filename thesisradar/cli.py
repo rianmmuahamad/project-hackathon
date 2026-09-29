@@ -7,12 +7,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import threading
 from pathlib import Path
 
-from . import engines
+from . import engines, mailer
 from .config import settings
 from .jev import describe as jev_describe
+from .schedule import Scheduler
 from .sectors import Budget, Sectors
 from .service import JobBusy, Service
 from .store import Store
@@ -65,6 +68,11 @@ def cmd_doctor(args) -> int:
     jev = jev_describe()
     mark = "ok  " if jev["available"] else "warn"
     print(f"  {mark} {'jev (decision layer)':22} {jev['detail']}")
+
+    if cfg.email_configured:
+        print(f"  ok   {'email digest':22} {cfg.smtp_host}:{cfg.smtp_port} → {cfg.smtp_to}")
+    else:
+        print(f"  warn {'email digest':22} not configured — checks run, no email is sent")
 
     ledger = store.credits()
     print(f"  ok   credits                 {ledger['credits_spent']} spent across "
@@ -261,6 +269,61 @@ def cmd_draft(args) -> int:
     return 0
 
 
+def cmd_scheduler(args) -> int:
+    """Run the schedule in the foreground: check, email, sleep until the next one."""
+    # The digest body is labelled with the configured time, so the flag has to be
+    # the configured time — otherwise `--when 23:58` would email "08:00".
+    os.environ["THESISRADAR_SCHEDULE_AT"] = args.when
+    os.environ["THESISRADAR_SCHEDULE_DAYS"] = args.days
+    service = Service()
+
+    if args.now:
+        # One sweep before the first wait, so a demo does not have to sit until 08:00.
+        print("running one sweep now —", end=" ", flush=True)
+        print(json.dumps(service.scheduled_check(), default=str))
+
+    scheduler = Scheduler(run=service.scheduled_check, when=args.when, days=args.days, tz=args.tz)
+    print(f"next check: {scheduler.next_run().isoformat()} ({args.tz})")
+    print("Ctrl-C to stop.")
+    scheduler.start()
+    idle = threading.Event()
+    try:
+        idle.wait()  # no timeout: the timer thread does the work, this just waits
+    except KeyboardInterrupt:
+        print("stopped")
+    finally:
+        scheduler.stop()
+    return 0
+
+
+def cmd_digest(args) -> int:
+    """Show the pending digest; with --send, email it."""
+    cfg = settings()
+    store = Store()
+    notes = mailer.survivors(store.list_notifications(unread_only=not args.all))
+    when = f"{cfg.schedule_at} Asia/Jakarta"
+    if not notes:
+        print("nothing to report — no notification is waiting")
+        return 0
+
+    subject = mailer.digest_subject(len(notes), [n.get("symbol") or "—" for n in notes])
+    print(f"subject: {subject}")
+    print(mailer.digest_body(notes, when=when))
+    if not args.send:
+        print("(dry run — pass --send to email this)")
+        return 0
+    if not cfg.email_configured:
+        print("not configured — set THESISRADAR_SMTP_HOST and THESISRADAR_SMTP_TO in .env")
+        return 1
+    try:
+        out = mailer.send(subject, mailer.digest_body(notes, when=when), cfg=cfg)
+    except mailer.MailError as err:
+        print(f"failed: {err}")
+        return 1
+    print(f"sent to {', '.join(out['to'])} in {out['seconds']}s")
+    return 0
+
+
 def cmd_serve(args) -> int:
     import uvicorn
     host = args.host
@@ -319,6 +382,20 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8788)
     p.set_defaults(func=cmd_serve)
+
+    p = sub.add_parser("scheduler",
+                       help="run the schedule in the foreground: check, email, sleep")
+    p.add_argument("--when", default="08:00", help="HH:MM local time (default 08:00)")
+    p.add_argument("--days", default="mon,tue,wed,thu,fri",
+                   help="weekdays to run on; empty means every day")
+    p.add_argument("--tz", default="Asia/Jakarta")
+    p.add_argument("--now", action="store_true", help="run one sweep immediately, then wait")
+    p.set_defaults(func=cmd_scheduler)
+
+    p = sub.add_parser("digest", help="show the pending digest; --send emails it")
+    p.add_argument("--send", action="store_true", help="actually send it")
+    p.add_argument("--all", action="store_true", help="include notifications already read")
+    p.set_defaults(func=cmd_digest)
 
     args = parser.parse_args(argv)
     return args.func(args)

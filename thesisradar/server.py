@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import Body, FastAPI, HTTPException
@@ -22,7 +23,27 @@ from .config import REPO_ROOT, settings
 from .jev import describe as jev_describe
 from .service import JobBusy, Service
 
-app = FastAPI(title="Thesis Radar", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """The server owns the clock: the schedule runs exactly as long as it does.
+
+    A misconfigured schedule must not stop the dashboard from serving, so the
+    failure is printed once and the timer is simply left off.
+    """
+    try:
+        state = SERVICE.start_schedule()
+        print(f"schedule: {state['when']} on {state['days']} ({state['tz']}) — "
+              f"next {state['next']}", flush=True)
+    except Exception as err:  # noqa: BLE001 — a bad THESISRADAR_SCHEDULE_AT is not fatal
+        print(f"schedule: disabled — {type(err).__name__}: {err}", flush=True)
+    try:
+        yield
+    finally:
+        SERVICE.stop_schedule()
+
+
+app = FastAPI(title="Thesis Radar", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -65,7 +86,9 @@ def health() -> dict[str, Any]:
 
 @app.get("/api/stats")
 def stats() -> dict[str, Any]:
-    return SERVICE.stats()
+    out = SERVICE.stats()
+    out["schedule"] = SERVICE.schedule_state()
+    return out
 
 
 @app.get("/api/queue")
@@ -186,10 +209,16 @@ def check_all(payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
     if SERVICE.current_job() and SERVICE.current_job().get("state") == "running":
         raise HTTPException(status_code=409,
                             detail=f"a {SERVICE.current_job()['kind']} job is already running")
-    _background("check-all", SERVICE.check_all,
-                watch_only=not payload.get("all", False),
-                limit=payload.get("limit"),
-                engine_override=payload.get("engine"))
+    # With email on (the default) the button runs the same sweep the timer runs,
+    # so a manual click and a scheduled run produce the same digest. Turning it
+    # off keeps the old behaviour with no mailer in the path at all.
+    if payload.get("email", True):
+        _background("check-all", SERVICE.scheduled_check, email=True)
+    else:
+        _background("check-all", SERVICE.check_all,
+                    watch_only=not payload.get("all", False),
+                    limit=payload.get("limit"),
+                    engine_override=payload.get("engine"))
     return {"started": True, "job": SERVICE.current_job()}
 
 

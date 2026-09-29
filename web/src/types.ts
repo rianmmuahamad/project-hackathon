@@ -207,7 +207,31 @@ export interface Stats {
   };
   engine: Record<string, { available: boolean; detail: string; model?: string }>;
   jev: { available: boolean; model: string | null };
+  schedule: Schedule;
   job: Job | null;
+}
+
+/** The schedule and its recent deliveries, published by `GET /api/stats`. */
+export interface Schedule {
+  next: string | null;
+  when: string;
+  days: string;
+  tz: string;
+  running: boolean;
+  email_configured: boolean;
+  digests: DigestRun[];
+}
+
+export interface DigestRun {
+  at: string;
+  checked: number;
+  changed: number;
+  emailed: boolean;
+  subject: string | null;
+  error: string | null;
+  reason?: string;
+  note?: string;
+  to?: string[];
 }
 
 export interface Decomposition {

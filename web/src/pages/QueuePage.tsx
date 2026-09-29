@@ -62,6 +62,7 @@ export function QueuePage({
   const engineName =
     Object.entries(stats?.engine ?? {}).find(([, info]) => info.available)?.[0] ?? "none";
   const jev = stats?.jev;
+  const schedule = stats?.schedule;
 
   return (
     <>
@@ -103,6 +104,17 @@ export function QueuePage({
           </span>
           <span className="qstat">
             <b>{jev?.available ? (jev.model ?? "on") : "off"}</b> jev
+          </span>
+          <span className="qstat">
+            <b>
+              {schedule?.next
+                ? `${shortDate(schedule.next)} ${schedule.next.slice(11, 16)}`
+                : "off"}
+            </b>{" "}
+            next check
+          </span>
+          <span className="qstat">
+            <b>{schedule?.email_configured ? "on" : "off"}</b> email
           </span>
         </div>
       </section>
@@ -169,6 +181,60 @@ export function QueuePage({
             })}
           </div>
         )}
+      </section>
+
+      <section className="section">
+        <div className="secttl">
+          <span className="eyebrow">delivery</span>
+          <h2 className="d-md">Scheduled digests</h2>
+        </div>
+        <div className="card card-tight">
+          {schedule && schedule.digests.length > 0 ? (
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th style={{ width: 150, minWidth: 140 }}>When</th>
+                  <th>Delivery</th>
+                  <th style={{ width: 110 }} className="num">
+                    Checked
+                  </th>
+                  <th style={{ width: 110 }} className="num">
+                    Changed
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {schedule.digests.map((run) => (
+                  <tr key={run.at}>
+                    <td className="mono dim">
+                      {shortDate(run.at)} {run.at.slice(11, 16)}
+                    </td>
+                    <td>
+                      {run.emailed ? (
+                        <>
+                          sent
+                          {run.to && run.to.length > 0 && (
+                            <div className="micro dim" style={{ marginTop: 6 }}>
+                              {run.to.join(", ")}
+                            </div>
+                          )}
+                        </>
+                      ) : run.error ? (
+                        <span className="dim">{run.error}</span>
+                      ) : (
+                        <span className="dim">{run.reason ?? run.note ?? "not sent"}</span>
+                      )}
+                    </td>
+                    <td className="mono num">{run.checked}</td>
+                    <td className="mono num">{run.changed === 0 ? "—" : run.changed}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p className="empty">No scheduled run yet this session.</p>
+          )}
+        </div>
       </section>
 
       <section className="section">

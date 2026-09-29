@@ -13,6 +13,7 @@ Runs on a temporary database, with zero Sectors credits and no model calls.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -536,6 +537,99 @@ def main() -> int:
         linked_served = sum(len(s["evidence_ordinals"]) for s in served["transcript_segments"])
         check(linked_served == len(served["evidence"]),
               "every evidence row is linked in the served payload too")
+
+        print("\nscheduled digest")
+        from thesisradar import mailer
+        from thesisradar.service import Service as ServiceCls
+
+        class FakeSMTP:
+            def __init__(self, *a, **k):
+                self.sent: list = []
+                self.tls = False
+                self.quit_called = False
+
+            def starttls(self): self.tls = True
+
+            def login(self, u, p): raise AssertionError("no credentials are configured")
+
+            def send_message(self, msg): self.sent.append(msg)
+
+            def quit(self): self.quit_called = True
+
+        class DeadSMTP(FakeSMTP):
+            def send_message(self, msg): raise OSError("connection refused")
+
+        with tempfile.TemporaryDirectory() as tmp5:
+            # Point the process at a relay so `email_configured` is true; the fake
+            # client is what actually receives the message.
+            os.environ["THESISRADAR_SMTP_HOST"] = "smtp.test"
+            os.environ["THESISRADAR_SMTP_TO"] = "oncall@example.com"
+            store5 = Store(path=Path(tmp5) / "radar.db")
+            sectors5 = StubSectors()
+            thesis5 = build_thesis(store5, sectors5)
+            service5 = ServiceCls(store=store5)
+            service5.cfg = cfg_settings()
+            check(service5.cfg.email_configured is True,
+                  "the block is running against a configured relay")
+
+            inbox: list = []
+            real_send = mailer.send
+
+            def capture(subject, body, *, cfg=None, smtp=None):  # noqa: ANN001
+                fake = FakeSMTP()
+                inbox.append(fake)
+                return real_send(subject, body, cfg=cfg, smtp=fake)
+
+            mailer.send = capture  # type: ignore[assignment]
+            try:
+                first = service5.scheduled_check()
+                check(len(inbox) == 1 and len(inbox[0].sent) == 1,
+                      "a status change produces exactly one digest email")
+                check(first["emailed"] is True, "the run reports that the digest left")
+                message = inbox[0].sent[0]
+                check("BBRI" in (message["Subject"] or ""),
+                      "the subject names the thesis that moved")
+                body5 = message.get_content()
+                check("BBRI" in body5 and "→" in body5,
+                      "the body carries the transition the notification recorded, not the raw result")
+                check(inbox[0].tls is True,
+                      "STARTTLS is negotiated before the message is handed over")
+
+                before_second = len(inbox)
+                second = service5.scheduled_check()
+                check(len(inbox) == before_second,
+                      "a sweep that changes nothing sends no email at all")
+                check(second["emailed"] is False and second["reason"],
+                      "the quiet run says why it stayed silent")
+                check(second["changed"] == 0, "nothing changed on the second sweep")
+
+                history = service5.recent_digests()
+                check(len(history) == 2 and history[0]["at"] >= history[1]["at"],
+                      "the digest history is kept newest first")
+                check(history[0]["emailed"] is False,
+                      "the newest entry records that nothing was sent")
+
+                # A dead relay must not lose the sweep or raise. Force a real
+                # status change so the sweep actually writes a notification —
+                # `previous_status` comes from the thesis row, not the check.
+                checks_before = store5.stats()["checks"]
+                mailer.send = lambda *a, **k: real_send(*a, smtp=DeadSMTP(), **k)  # type: ignore[assignment]
+                store5.set_watch(thesis5, True)
+                store5.x("UPDATE theses SET status='broken' WHERE id=?", (thesis5,))
+                third = service5.scheduled_check()
+                check(third["emailed"] is False and third.get("error"),
+                      "a failing relay is reported in the run, not raised")
+                check(store5.stats()["checks"] > checks_before,
+                      "the sweep still completed and stored its check despite the failure")
+                check(service5.recent_digests(1)[0].get("error") is not None
+                      or third.get("error") is not None,
+                      "the failure is visible in the digest history")
+            finally:
+                mailer.send = real_send  # type: ignore[assignment]
+                os.environ.pop("THESISRADAR_SMTP_HOST", None)
+                os.environ.pop("THESISRADAR_SMTP_TO", None)
+                store5.close()
+                service5.stop_schedule()
 
         print("\nengine fallback")
         availability = engines.describe()

@@ -140,7 +140,7 @@ python -m thesisradar check BBRI   # still measures, still scores, still persist
 | Custom tool-use pipelines | `thesisradar/tools.py` — ten tools that answer *questions* ("is this move the company's or the market's?"), not endpoint wrappers |
 | Routing between data sources | Jev decides *whether* the agent needs to run and what it should look for; the agent then chooses across price, foreign flow, broker desks, filings, news, corporate actions, suspensions, subsector peers and the index |
 | Memory or state management | `thesisradar/store.py` — theses, claims, checks, evidence, changes, watermarks, notifications, credit ledger |
-| Autonomous task execution | budget-bounded checks that run to a verdict unattended; `check-all` sweeps every watched thesis; duplicates are refused rather than re-paid |
+| Autonomous task execution | budget-bounded checks that run to a verdict unattended; a wall-clock schedule (`THESISRADAR_SCHEDULE_AT`) sweeps every watched thesis and emails the digest when something moved; duplicates are refused rather than re-paid |
 | Purpose-built interface | `web/` — a thesis workspace built for exactly one task, served by `thesisradar serve` |
 
 Hermes is used as an **engine, not as the product**, and that is enforced in code: one `Engine`
@@ -192,8 +192,35 @@ Node 20+ only to rebuild the dashboard (the build output is committed).
 | `queue` | 0 | the worklist, worst first |
 | `show X` | 0 | one thesis with its evidence, history and transcript |
 | `draft` | ~6 | propose theses that the reported numbers already support |
-| `doctor` | ≤1 | environment, engine availability, credit ledger |
-| `serve` | 0 | the dashboard |
+| `digest [--send] [--all]` | 0 | build the pending digest without checking; `--send` emails it |
+| `scheduler [--when 08:00] [--days mon,...]` | per thesis | run the sweep unattended, on a wall clock, in the foreground |
+| `doctor` | ≤1 | environment, engine availability, email, credit ledger |
+| `serve` | 0 | the dashboard, which also runs the schedule |
+
+### Unattended by default
+
+A product that only reports a change to someone already staring at the dashboard has not solved
+the problem. So the sweep runs itself:
+
+- **the server owns the clock.** `python -m thesisradar serve` starts the schedule on startup and
+  stops it on shutdown (`THESISRADAR_SCHEDULE_AT`, `THESISRADAR_SCHEDULE_DAYS`, `Asia/Jakarta`).
+  The dashboard's *next check* and *email* stats read the same state, and the *Scheduled digests*
+  table shows what each run did;
+- **the clock is testable without waiting.** `due_at(now, "08:00", "mon,...")` takes "now" as an
+  argument, so the schedule is verified by arithmetic rather than by sleeping until morning;
+- **the digest is built from stored notifications**, not from the sweep's return value — the same
+  rows the dashboard shows, filtered to the ones worth a push (`ok` transitions are silenced,
+  `info` is kept because a first-ever check is the product's first useful message);
+- **delivery is best-effort.** An unreachable relay is recorded as `emailed: false` with the error
+  and never raises: the checks ran, the evidence is stored, and the run degrades to what the
+  product was before email existed instead of losing a sweep;
+- **`scheduler --now` is the demo path.** One sweep, then it waits; `Ctrl-C` stops it. The same
+  `Scheduler.run_once()` is the entry point for an external driver (systemd timer, `hermes cron`)
+  if a deployment wants the timer outside the process.
+
+Email needs only `THESISRADAR_SMTP_HOST` and `THESISRADAR_SMTP_TO`; port `587` with STARTTLS is the
+default, `THESISRADAR_SMTP_TLS=0` switches to implicit TLS for port `465`, and an unauthenticated
+relay is fine — login happens only when both halves of a credential are set.
 
 ### Credit discipline
 
@@ -223,7 +250,9 @@ cd web && npm run build                   # typecheck + bundle
 `verify_pipeline.py` is the one that matters: it runs the whole pipeline against a stub API whose
 numbers are chosen so every answer is known — a claim whose metric grew 17% must clear a 10%
 growth threshold, a claim whose metric fell two quarters running must come back `weakening`, a
-status change must produce exactly one notification and a no-op must produce none.
+status change must produce exactly one notification and a no-op must produce none, and a scheduled
+sweep must send exactly one email for that change, send nothing when nothing moved, and survive a
+relay that refuses the connection.
 
 ## Layout
 
@@ -236,6 +265,8 @@ thesisradar/
   tools.py      the agent's ten tools
   engines.py    Engine interface: hermes | direct
   jev.py        Jev (TypeSafe System One) — decision layer and prose guardrail
+  schedule.py   the clock: due_at, weekday parsing, one daemon thread
+  mailer.py     the digest: notification rows → one plain-text email
   audit.py      the loop: measure → decide → interpret → guard → persist
   store.py      SQLite: theses, claims, checks, evidence, changes, notifications
   service.py    operations shared by CLI and server
@@ -257,3 +288,8 @@ tools/          verification scripts
   underneath it. A sentence that cites nothing skips the model call entirely.
 - There is no automated trading, and no investment advice: the product reports what changed and
   how confident it is. Every screen carries that framing.
+- The schedule is in-process and in-memory: it runs while `serve` (or `scheduler`) is running, and
+  knows nothing about a run that happened on another machine. The durable record of what was
+  reported is the `notifications` table, not the digest history.
+- Email is one-way and best-effort. There is no retry queue and no read receipt; a failed delivery
+  is recorded in the run and the notifications stay in the dashboard, which is the source of truth.
