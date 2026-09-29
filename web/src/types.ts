@@ -76,6 +76,35 @@ export interface EvidenceRow {
   note: string | null;
 }
 
+export type SegmentKind =
+  | "header"
+  | "brief"
+  | "decision"
+  | "ledger"
+  | "tool"
+  | "verdict"
+  | "guardrail"
+  | "round"
+  | "note"
+  | "other";
+
+export interface TranscriptSegment {
+  ordinal: number;
+  kind: SegmentKind;
+  /** Short UI label chosen server-side, e.g. "Keputusan Jev". */
+  label: string;
+  /** The heading exactly as written in the file. */
+  title: string;
+  /** Markdown body, heading excluded. */
+  body: string;
+  /** Tool name for kind "tool", else null. */
+  tool: string | null;
+  /** One line of body text, for the collapsed row. */
+  summary: string;
+  /** Ordinals of the evidence rows this segment produced. */
+  evidence_ordinals: number[];
+}
+
 export interface CheckDetail extends CheckSummary {
   claim_results: ClaimResult[];
   evidence: EvidenceRow[];
@@ -83,6 +112,10 @@ export interface CheckDetail extends CheckSummary {
   transcript?: string;
   /** Present only once the check has written its verdict. */
   finished?: boolean;
+  /** The transcript split into labelled sections, decoded server-side. */
+  transcript_segments?: TranscriptSegment[];
+  /** Base URL the `/v2/...` evidence endpoints belong to. */
+  sectors_base?: string;
 }
 
 export interface QueueRow {

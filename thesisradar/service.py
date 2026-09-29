@@ -13,7 +13,7 @@ import time
 from datetime import date, timedelta
 from typing import Any
 
-from . import audit, engines, thesis as thesis_mod, tools
+from . import audit, engines, thesis as thesis_mod, tools, transcript
 from .config import settings
 from .engines import EngineUnavailable
 from .jev import describe
@@ -250,12 +250,19 @@ class Service:
         detail = dict(thesis)
         detail["checks"] = checks
         detail["notifications"] = self.store.list_notifications(limit=20)
+        detail["sectors_base"] = settings().api_base
         if checks:
-            detail["latest"] = self.store.check_detail(checks[0]["id"])
+            # Decorated here as well as in `check_detail`, so the workspace's
+            # first paint already has segments and does not fire a second request.
+            detail["latest"] = transcript.decorate(self.store.check_detail(checks[0]["id"]))
         return detail
 
     def check_detail(self, check_id: str) -> dict[str, Any] | None:
-        return self.store.check_detail(check_id)
+        detail = transcript.decorate(self.store.check_detail(check_id))
+        if detail is None:
+            return None
+        detail["sectors_base"] = settings().api_base
+        return detail
 
     def stats(self) -> dict[str, Any]:
         jev = describe()

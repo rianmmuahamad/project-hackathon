@@ -5,6 +5,7 @@ import { LiveJob } from "../components/LiveJob";
 import { ClaimList, ChangeStrip } from "../components/ChangeStrip";
 import { EvidenceTable } from "../components/EvidenceTable";
 import { StatusChip } from "../components/StatusChip";
+import { TranscriptView } from "../components/TranscriptView";
 import { confidence, relative, shortDate, titleFor } from "../format";
 import type { CheckDetail, Job, ThesisDetail } from "../types";
 
@@ -206,7 +207,7 @@ export function ThesisWorkspace({
 
           <h3>Bukti — setiap angka dengan sumbernya</h3>
           <div className="card tight">
-            <EvidenceTable rows={detail.evidence} />
+            <EvidenceTable rows={detail.evidence} sectorsBase={detail.sectors_base} />
           </div>
 
           <h3>Transkrip agen</h3>
@@ -215,19 +216,10 @@ export function ThesisWorkspace({
               Tool di bawah dipilih oleh agen, bukan skrip. Anda bisa melihat alat apa yang ia raih, berapa
               kreditnya, dan di mana ia mengubah kesimpulannya sendiri.
             </p>
-            {detail.transcript ? (
-              <details open>
-                <summary>tampilkan {detail.transcript.length.toLocaleString()} karakter</summary>
-                <div className="transcript">{detail.transcript}</div>
-              </details>
-            ) : (
-              <p className="dim">Transkrip tidak tersimpan untuk pemeriksaan ini.</p>
-            )}
-            {detail.transcript_path && (
-              <div className="dim mono" style={{ marginTop: 8 }}>
-                {detail.transcript_path}
-              </div>
-            )}
+            <TranscriptView
+              segments={detail.transcript_segments ?? []}
+              markdown={detail.transcript}
+            />
           </div>
         </>
       ) : (

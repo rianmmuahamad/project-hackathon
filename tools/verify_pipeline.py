@@ -22,6 +22,7 @@ sys.path.insert(0, str(ROOT))
 
 from thesisradar import audit, engines  # noqa: E402
 from thesisradar.sectors import Budget, Sectors  # noqa: E402
+from thesisradar.service import Service  # noqa: E402
 from thesisradar.store import Store  # noqa: E402
 
 FAILURES: list[str] = []
@@ -467,6 +468,74 @@ def main() -> int:
                   "when the decision layer fails the agent still decides, as before")
             check(broken["status"] is not None, "the check still completes a verdict")
             store3.close()
+
+        print("\ntranscript segmentation")
+        from thesisradar import transcript as tr_mod
+
+        fixture = (
+            "# Check ck-test — BBRI\n\n- engine: `hermes`\n- tool calls: 2\n\n"
+            "Every number the verdict rests on is in this file.\n"
+            "## Thesis brief\n\n```\nSTOCK: BBRI\n```\n\n"
+            "## Decision (Jev)\n\n3 claim question(s) answered in 1.10s.\n\n"
+            "_Skipped a repeat of `sector_context`; the earlier result stands._\n\n"
+            "## Free read: `evidence_ledger`\n\n```json\n{\"symbol\": \"BBRI\"}\n```\n\n"
+            "## Tool call 2: `what_changed`\n\n```json\n{\"symbol\": \"BBRI\"}\n```\n\n"
+            "```json\n{\"price\": {\"change_pct\": -3.08}}\n```\n\n"
+            "## Verdict\n\n```json\n{\"confidence\": 0.6, \"summary\": \"x\"}\n```\n\n"
+            "## Guardrail (Jev)\n\nChecked 5 cited number(s). No unsupported figure found.\n"
+        )
+        segs = tr_mod.segment_transcript(fixture)
+        check([s["kind"] for s in segs] ==
+              ["header", "brief", "decision", "note", "ledger", "tool", "verdict", "guardrail"],
+              "the splitter preserves file order and lifts standalone notes into their own segment")
+        tool_seg = next((s for s in segs if s["kind"] == "tool"), None)
+        check(tool_seg is not None and tool_seg["tool"] == "what_changed",
+              "the tool name is read out of the backticked heading")
+        check(all("## " not in s["summary"] and "`" not in s["summary"] for s in segs),
+              "no summary carries a heading marker or a backtick")
+        check(next(s for s in segs if s["kind"] == "verdict")["summary"].startswith("2 field"),
+              "a section that is only a JSON block is summarised structurally")
+
+        lone = tr_mod.segment_transcript("just prose, no headings")
+        check(len(lone) == 1 and lone[0]["kind"] == "header",
+              "a transcript with no headings still yields one segment rather than nothing")
+        check(tr_mod.segment_transcript(None) == [] and tr_mod.segment_transcript("") == [],
+              "an absent transcript yields no segments")
+
+        with tempfile.TemporaryDirectory() as tmp4:
+            store4 = Store(path=Path(tmp4) / "radar.db")
+            sectors4 = StubSectors()
+            thesis4 = build_thesis(store4, sectors4)
+            run4 = audit.run(thesis4, engine=RecordingEngine(
+                tool_call={"tool": "sector_context", "args": {"symbol": "BBRI"}},
+                verdict={"claim_states": [], "summary": "context", "confidence": 0.7}),
+                store=store4, sectors=sectors4, jev=StubJev(decidable="context:sector"),)
+            detail4 = store4.check_detail(run4["check_id"])
+            segs4 = tr_mod.segment_transcript(detail4["transcript"])
+            tr_mod.link_evidence(segs4, detail4["evidence"])
+            linked = sum(len(s["evidence_ordinals"]) for s in segs4)
+            check(linked == len(detail4["evidence"]),
+                  f"every stored evidence row is linked to a segment "
+                  f"({linked} of {len(detail4['evidence'])})")
+            check(all(o not in (None, "") for s in segs4 for o in s["evidence_ordinals"]),
+                  "no link carries a missing ordinal")
+            check(any(s["evidence_ordinals"] for s in segs4),
+                  "at least one segment carries evidence")
+            store4.close()
+
+        from thesisradar.config import settings as cfg_settings
+        service = Service(store)
+        served = service.check_detail(result["check_id"])
+        check(isinstance(served.get("transcript_segments"), list) and served["transcript_segments"],
+              "the served check detail carries typed segments")
+        check(served.get("sectors_base") == cfg_settings().api_base,
+              "the served check detail publishes the API base the copy button needs")
+        thesis_served = service.thesis_detail(thesis_id)
+        check(isinstance((thesis_served.get("latest") or {}).get("transcript_segments"), list),
+              "the first paint of the thesis carries segments without a second request")
+        linked_served = sum(len(s["evidence_ordinals"]) for s in served["transcript_segments"])
+        check(linked_served == len(served["evidence"]),
+              "every evidence row is linked in the served payload too")
 
         print("\nengine fallback")
         availability = engines.describe()

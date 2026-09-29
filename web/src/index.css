@@ -176,3 +176,73 @@ details summary:hover { color: var(--text); }
 .empty { color: var(--dim); padding: 30px 6px; text-align: center; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 @media (max-width: 1000px) { .grid2 { grid-template-columns: 1fr; } }
+
+/* ── Evidence table ─────────────────────────────────────────────────── */
+.toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+.toolbar input[type="search"] {
+  width: auto; min-width: 200px; flex: 1; max-width: 320px;
+}
+.fchip {
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--muted);
+  padding: 3px 10px; font-size: 12px; border-radius: 999px; cursor: pointer;
+}
+.fchip:hover { color: var(--text); }
+.fchip.on { border-color: var(--accent); color: var(--text); }
+.fchip b { font-variant-numeric: tabular-nums; margin-left: 4px; font-weight: 600; }
+
+.srcbadge {
+  display: inline-block; width: 66px; font-size: 10px; font-weight: 700;
+  text-align: center; border-radius: 4px; padding: 2px 0; letter-spacing: 0.02em;
+}
+.srcbadge.api { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.srcbadge.tool { background: color-mix(in srgb, var(--muted) 18%, transparent); color: var(--muted); }
+.srcbadge.jev { background: color-mix(in srgb, var(--review) 20%, transparent); color: var(--review); }
+.srcbadge.guardrail { background: color-mix(in srgb, var(--broken) 18%, transparent); color: var(--broken); }
+
+.erow {
+  display: grid; grid-template-columns: 34px 66px 1fr; gap: 10px;
+  padding: 7px 10px; border-bottom: 1px solid var(--line-soft); cursor: pointer;
+}
+.erow:hover { background: #0f1620; }
+.erow.open { background: var(--panel-2); }
+.erow:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.evalue {
+  font-family: var(--mono); text-align: right; font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.edetail {
+  padding: 10px 12px 14px 110px; border-bottom: 1px solid var(--line);
+  background: #0d131b; font-size: 13px;
+}
+
+/* ── Transcript ─────────────────────────────────────────────────────── */
+.seg { border: 1px solid var(--line); border-radius: 6px; margin-bottom: 6px; background: var(--panel); }
+.seg.open { border-color: #2b6cb0; }
+.seg-head {
+  display: flex; gap: 10px; align-items: center; padding: 8px 12px;
+  cursor: pointer; width: 100%; background: none; border: 0; text-align: left; color: inherit;
+}
+.seg-head:hover { background: var(--panel-2); }
+.seg-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.seg-sum {
+  padding: 0 12px 8px 12px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.seg.open .seg-sum { display: none; }
+.seg-body { padding: 0 12px 12px 12px; border-top: 1px solid var(--line-soft); }
+.kbadge {
+  display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: 0.02em;
+  border-radius: 4px; padding: 2px 8px; white-space: nowrap;
+  background: color-mix(in srgb, var(--dim) 20%, transparent); color: var(--dim);
+}
+.kbadge.decision { background: color-mix(in srgb, var(--review) 20%, transparent); color: var(--review); }
+.kbadge.verdict { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.kbadge.guardrail { background: color-mix(in srgb, var(--broken) 18%, transparent); color: var(--broken); }
+.kbadge.tool { background: color-mix(in srgb, var(--muted) 20%, transparent); color: var(--muted); }
+
+.code {
+  font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap; word-break: break-word;
+  background: #0d131b; border: 1px solid var(--line-soft); border-radius: 6px;
+  padding: 10px 12px; margin: 8px 0 0; max-height: 340px; overflow: auto;
+}
+.count { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
