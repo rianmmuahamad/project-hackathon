@@ -11,18 +11,11 @@ import type { Job, QueueRow, Stats } from "./types";
 
 type View = { name: "queue" } | { name: "thesis"; id: string } | { name: "new" } | { name: "notifications" };
 
-const NAV = [
+const NAV: Array<[View["name"], string]> = [
   ["queue", "Queue"],
   ["new", "New thesis"],
   ["notifications", "Notifications"],
-] as const;
-
-/** One glyph per primary destination, for the mobile bottom bar. */
-const NAV_ICON: Record<(typeof NAV)[number][0], string> = {
-  queue: "◎",
-  new: "＋",
-  notifications: "◔",
-};
+];
 
 function parseHash(): View {
   const hash = window.location.hash.replace(/^#\/?/, "");
@@ -202,32 +195,26 @@ export function App() {
 }
 
 /**
- * The primary navigation on a phone.
+ * The primary navigation on a phone: the same pill group, moved to the bottom.
  *
- * Rendered on every viewport but `display: none` above 900px via `.bottombar`,
- * so there is exactly one nav in the accessibility tree at any width and no
- * JS width listener to keep in sync.
+ * The markup is the top bar's own — `.navpills` wrapping `.navpill` — so the
+ * shape is identical at both widths. Only the position changes, via CSS: below
+ * 900px `.navpills` inside `.bottombar` is `position: fixed; bottom: 0`. The
+ * same node is never rendered twice, so there is one nav in the accessibility
+ * tree at any width.
  */
 function BottomBar({ current, unread }: { current: View["name"]; unread: number }) {
   return (
-    <nav className="bottombar" aria-label="primary">
-      {NAV.map(([name, label]) => (
-        <a
-          key={name}
-          href={`#/${name}`}
-          className={`bottombar-item${current === name ? " on" : ""}`}
-          aria-current={current === name ? "page" : undefined}
-        >
-          <span className="bottombar-icon" aria-hidden="true">
-            {NAV_ICON[name]}
-          </span>
-          <span className="bottombar-label">
+    <div className="bottombar">
+      <nav className="navpills" aria-label="primary mobile">
+        {NAV.map(([name, label]) => (
+          <a key={name} href={`#/${name}`} className={`navpill${current === name ? " on" : ""}`}>
             {label}
             {name === "notifications" && unread > 0 && <b className="navcount">{unread}</b>}
-          </span>
-        </a>
-      ))}
-    </nav>
+          </a>
+        ))}
+      </nav>
+    </div>
   );
 }
 
