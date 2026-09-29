@@ -87,12 +87,28 @@ METRIC_ALIASES: dict[str, str] = {
     "net cash flow": "net_cash_flow",
     "investing cash flow": "investing_cash_flow",
     "financing cash flow": "financing_cash_flow",
+    # commodity subjects
+    "harga": "commodity_price", "harga komoditas": "commodity_price",
+    "price": "commodity_price", "commodity price": "commodity_price",
+    "harga nikel": "commodity_price", "harga emas": "commodity_price",
+    "harga batu bara": "commodity_price", "harga tembaga": "commodity_price",
+    "produksi": "production_volume", "production": "production_volume",
+    "volume produksi": "production_volume", "produksi nikel": "production_volume",
+    "produksi batu bara": "production_volume", "output": "production_volume",
 }
 
 # Metrics the API computes per-year rather than per-quarter. Baseline capture
 # must use a different endpoint for these, so they are flagged rather than
 # silently producing an empty series.
 PRICE_METRICS = ("close", "price", "harga", "market_cap", "kapitalisasi")
+
+# How many observations make a year, per claim cadence. The year-on-year offset
+# is derived from this instead of being hardcoded to quarters.
+PERIODS_PER_YEAR: dict[str, int] = {
+    "quarterly": 4,
+    "commodity_price": 12,   # the price endpoint returns monthly rows
+    "production": 1,         # the production endpoint returns annual rows
+}
 
 _ALLOWED = set(METRIC_ALIASES.values())
 
@@ -276,6 +292,8 @@ DISCONTINUITY_BANDS: dict[str, tuple[float, float]] = {
     "operating_cash_flow": (1.50, 1.50), "free_cash_flow": (1.50, 1.50),
     "net_cash_flow": (1.50, 1.50), "investing_cash_flow": (1.50, 1.50),
     "financing_cash_flow": (1.50, 1.50),
+    # commodities
+    "production_volume": (3.00, 1.00),
 }
 DEFAULT_BAND: tuple[float, float] = (1.00, 0.60)
 

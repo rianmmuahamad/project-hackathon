@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { api } from "../api";
-import type { Decomposition, Draft } from "../types";
+import type { Commodity, Decomposition, Draft } from "../types";
 
 /**
  * Writing a thesis down.
@@ -12,7 +12,9 @@ import type { Decomposition, Draft } from "../types";
  * purpose-built interface for this one task is the product, not the model call.
  */
 export function ComposePage({ onCreated }: { onCreated: (id: string) => void }) {
+  const [subjectType, setSubjectType] = useState<"equity" | "commodity">("equity");
   const [symbol, setSymbol] = useState("");
+  const [commoditiesList, setCommoditiesList] = useState<Commodity[]>([]);
   const [statement, setStatement] = useState("");
   const [horizon, setHorizon] = useState("2 quarters");
   const [busy, setBusy] = useState(false);
@@ -23,11 +25,16 @@ export function ComposePage({ onCreated }: { onCreated: (id: string) => void }) 
   const [draftBusy, setDraftBusy] = useState(false);
   const [draftNote, setDraftNote] = useState<string | null>(null);
 
+  useEffect(() => {
+    api.commodities()
+      .then((res) => setCommoditiesList(res.commodities || []))
+      .catch(() => setCommoditiesList([]));
+  }, []);
   async function submit() {
     setBusy(true);
     setError(null);
     try {
-      const payload = await api.createThesis({ symbol, statement, horizon });
+      const payload = await api.createThesis({ symbol, statement, horizon, subject_type: subjectType });
       setResult({ id: payload.thesis.id, split: payload.decomposition, credits: payload.credits });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -125,14 +132,47 @@ export function ComposePage({ onCreated }: { onCreated: (id: string) => void }) 
             <h2 className="d-md">Thesis</h2>
           </div>
           <div className="stack" style={{ gap: "var(--s-md)" }}>
+            <div className="pillrow">
+              <button
+                type="button"
+                className={`btn btn-secondary ${subjectType === "equity" ? "btn-active" : ""}`}
+                style={subjectType === "equity" ? { background: "var(--surface-sunken)", color: "var(--fg-loud)", borderColor: "var(--border-strong)" } : {}}
+                onClick={() => { setSubjectType("equity"); setSymbol(""); }}
+              >
+                Equity (IDX)
+              </button>
+              <button
+                type="button"
+                className={`btn btn-secondary ${subjectType === "commodity" ? "btn-active" : ""}`}
+                style={subjectType === "commodity" ? { background: "var(--surface-sunken)", color: "var(--fg-loud)", borderColor: "var(--border-strong)" } : {}}
+                onClick={() => { setSubjectType("commodity"); setSymbol(""); }}
+              >
+                Commodity (Mining)
+              </button>
+            </div>
             <label className="field">
-              <span>Ticker (IDX)</span>
-              <input
-                className="input"
-                value={symbol}
-                onChange={(event) => setSymbol(event.target.value.toUpperCase())}
-                placeholder="BBRI"
-              />
+              <span>{subjectType === "commodity" ? "Commodity" : "Ticker (IDX)"}</span>
+              {subjectType === "commodity" ? (
+                <select
+                  className="input"
+                  value={symbol}
+                  onChange={(event) => setSymbol(event.target.value)}
+                >
+                  <option value="">Select a commodity...</option>
+                  {commoditiesList.map((c) => (
+                    <option key={c.name} value={c.name}>
+                      {c.name} — {c.stale_days > 30 ? `${c.stale_days} days behind` : "current"}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  className="input"
+                  value={symbol}
+                  onChange={(event) => setSymbol(event.target.value.toUpperCase())}
+                  placeholder="BBRI"
+                />
+              )}
             </label>
             <label className="field">
               <span>Thesis</span>
@@ -140,7 +180,11 @@ export function ComposePage({ onCreated }: { onCreated: (id: string) => void }) 
                 className="input"
                 value={statement}
                 onChange={(event) => setStatement(event.target.value)}
-                placeholder="Buy BBRI because loans grow at least 10% YoY and net interest income keeps rising, so earnings should keep climbing for two more quarters."
+                placeholder={
+                  subjectType === "commodity"
+                    ? "Harga nikel naik terus dan produksi nasional tumbuh dua digit."
+                    : "Buy BBRI because loans grow at least 10% YoY and net interest income keeps rising, so earnings should keep climbing for two more quarters."
+                }
               />
             </label>
             <label className="field">
@@ -154,7 +198,11 @@ export function ComposePage({ onCreated }: { onCreated: (id: string) => void }) 
             <div>
               <button
                 className="btn btn-primary"
-                disabled={busy || symbol.trim().length < 3 || statement.trim().length < 10}
+                disabled={
+                  busy ||
+                  (subjectType === "equity" ? symbol.trim().length < 3 : !symbol.trim()) ||
+                  statement.trim().length < 10
+                }
                 onClick={() => void submit()}
               >
                 {busy ? "Splitting claims..." : "Save & split claims"}

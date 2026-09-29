@@ -131,6 +131,7 @@ export interface QueueRow {
   watermark: string | null;
   last_check: CheckSummary | null;
   changes: Change[];
+  subject_type?: "equity" | "commodity";
 }
 
 export interface ThesisDetail {
@@ -154,6 +155,7 @@ export interface ThesisDetail {
   recent_changes: Change[];
   checks: CheckSummary[];
   latest?: CheckDetail;
+  subject_type?: "equity" | "commodity";
 }
 
 export interface Notification {
@@ -257,4 +259,12 @@ export interface DraftResponse {
   skipped: Array<{ symbol: string; reason: string }>;
   credits: number;
   note: string;
+}
+
+export interface Commodity {
+  name: string;
+  data_points: number;
+  earliest_date: string;
+  latest_date: string;
+  stale_days: number;
 }

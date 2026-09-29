@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, Callable
+from urllib.parse import quote
 
 from . import metrics
 from .sectors import Sectors, SectorsError, bare, last_available_day
@@ -238,6 +239,91 @@ def fundamentals_delta(s: Sectors, symbol: str, metric: str = "", quarters: int 
         ),
         "endpoint": f"/v2/financials/quarterly/{symbol}/",
         "params": {"n_quarters": quarters},
+    }
+
+def commodity_price(s: Sectors, commodity: str, years: int = 3) -> dict[str, Any]:
+    """The monthly price series for ONE commodity in USD/ton.
+
+    Returns the series and recent year-on-year changes so the agent can see the trend.
+    """
+    commodity = (commodity or "").strip()
+    years = _clamp_int(years, 3, 1, 3)
+    this_year = date.today().year
+    rows = s.commodity_prices(commodity, start_year=this_year - years + 1, end_year=this_year)
+    clean = []
+    for r in rows:
+        if r.get("date") and r.get("price_usd_per_ton") is not None:
+            clean.append({"date": str(r["date"]), "value": float(r["price_usd_per_ton"])})
+    clean.sort(key=lambda r: r["date"])
+
+    if not clean:
+        return {
+            "symbol": commodity, "metric": "commodity_price", "series": [],
+            "error": f"no price data reported for commodity '{commodity}'",
+            "endpoint": f"/v2/mining/commodities/{quote(commodity, safe='')}/price/",
+        }
+
+    latest = clean[-1]
+    yoy_idx = len(clean) - 13 if len(clean) > 12 else 0
+    prior = clean[yoy_idx] if len(clean) > 1 else None
+    delta = metrics.pct_change(latest["value"], prior["value"]) if prior and prior.get("value") else None
+
+    staleness_days = 0
+    try:
+        staleness_days = (date.today() - date.fromisoformat(latest["date"])).days
+    except ValueError:
+        pass
+
+    return {
+        "symbol": commodity,
+        "metric": "commodity_price",
+        "series": [{"date": p["date"], "value": p["value"], "display": f"{p['value']:,.2f} USD/ton"} for p in clean],
+        "latest": {"date": latest["date"], "value": latest["value"], "display": f"{latest['value']:,.2f} USD/ton"},
+        "delta_yoy_pct": None if delta is None else round(delta * 100, 2),
+        "delta_yoy_display": "n/a" if delta is None else f"{delta * 100:+.1f}%",
+        "staleness_days": staleness_days,
+        "endpoint": f"/v2/mining/commodities/{quote(commodity, safe='')}/price/",
+        "params": {"start_year": this_year - years + 1, "end_year": this_year},
+    }
+
+
+def commodity_production(s: Sectors, commodity: str) -> dict[str, Any]:
+    """Annual production for ONE commodity in Indonesia, with volume and YoY changes."""
+    commodity = (commodity or "").strip()
+    rows = s.commodity_production(commodity)
+    clean = []
+    for r in rows:
+        year = r.get("year")
+        if year is not None and r.get("production_volume") is not None:
+            clean.append({
+                "year": int(year),
+                "date": str(year),
+                "value": float(r["production_volume"]),
+                "prev_value": r.get("prev_year_volume"),
+                "unit": r.get("unit", "Mt"),
+                "yoy_change_percent": r.get("yoy_change_percent"),
+            })
+    clean.sort(key=lambda r: r["year"])
+
+    if not clean:
+        return {
+            "symbol": commodity, "metric": "production_volume", "series": [],
+            "error": f"no production data reported for commodity '{commodity}'",
+            "endpoint": "/v2/mining/total-production/",
+        }
+
+    latest = clean[-1]
+    return {
+        "symbol": commodity,
+        "metric": "production_volume",
+        "series": [{"date": str(p["year"]), "value": p["value"], "display": f"{p['value']:,.2f} {p['unit']}",
+                    "yoy_change_percent": p["yoy_change_percent"]} for p in clean],
+        "latest": {"date": str(latest["year"]), "value": latest["value"], "display": f"{latest['value']:,.2f} {latest['unit']}"},
+        "delta_yoy_pct": latest.get("yoy_change_percent"),
+        "delta_yoy_display": "n/a" if latest.get("yoy_change_percent") is None else f"{latest['yoy_change_percent']:+.1f}%",
+        "unit": latest["unit"],
+        "endpoint": "/v2/mining/total-production/",
+        "params": {"commodity_type": commodity},
     }
 
 
@@ -511,6 +597,25 @@ TOOLS: tuple[Tool, ...] = (
         fundamentals_delta,
     ),
     Tool(
+        "commodity_price",
+        "The monthly price series for ONE commodity in USD/ton, with its year-on-year and "
+        "quarter-on-year moves. Use it for a claim about what a commodity price did.",
+        {"type": "object", "properties": {
+            "commodity": {"type": "string", "description": "e.g. Nickel, Gold, Coal"},
+            "years": {"type": "integer", "description": "how many years back (max 3)"},
+        }, "required": ["commodity"]},
+        commodity_price,
+    ),
+    Tool(
+        "commodity_production",
+        "Annual production for ONE commodity in Indonesia, with volume and year-on-year change. "
+        "Use it for a claim about output or supply.",
+        {"type": "object", "properties": {
+            "commodity": {"type": "string", "description": "e.g. Nickel, Coal"},
+        }, "required": ["commodity"]},
+        commodity_production,
+    ),
+    Tool(
         "flow_delta",
         "Whether the money is still arriving or has turned: net foreign flow split into "
         "first half vs second half of the window, plus the broker desks accumulating and "
@@ -611,18 +716,17 @@ def schemas() -> list[dict[str, Any]]:
     return out
 
 
-def catalogue_for_prompt() -> str:
-    """The same tools as plain text, for engines driven by a prompt."""
-    lines = [f"- {t.name}({', '.join((t.parameters.get('properties') or {}))}) — {t.description}"
-             for t in TOOLS]
-    lines.append("- evidence_ledger(symbol) — what this product already gathered about a "
-                 "stock; costs 0 credits.")
-    return "\n".join(lines)
-
-
-def execute(name: str, args: dict[str, Any], sectors: Sectors, store) -> dict[str, Any]:
+def execute(name: str, args: dict[str, Any], sectors: Sectors, store, *,
+            thesis: dict[str, Any] | None = None) -> dict[str, Any]:
     """Run one tool call and report how many credits it cost."""
     args = args or {}
+    if thesis and thesis.get("subject_type") == "commodity":
+        if name in ("what_changed", "fundamentals_delta", "flow_delta", "insider_activity",
+                    "corporate_action_check", "sector_context"):
+            return {
+                "error": "this tool is for equities; use commodity_price or commodity_production",
+                "credits": 0,
+            }
     if name in LOCAL_TOOLS:
         return {"result": LOCAL_TOOLS[name](store, **args), "credits": 0}
 

@@ -139,6 +139,11 @@ export function QueuePage({
                       {STATUS_LABEL[row.status]}
                     </span>
                     <span className="rowcard-sym">{row.symbol}</span>
+                    {row.subject_type === "commodity" && (
+                      <span className="tag" style={{ marginLeft: 8 }}>
+                        COMMODITY
+                      </span>
+                    )}
                     <span className="spacer" />
                     <span className="rowcard-conf">
                       confidence <b>{row.confidence === null ? "—" : row.confidence.toFixed(2)}</b>

@@ -18,6 +18,7 @@ import json
 import time
 import urllib.error
 import urllib.parse
+from urllib.parse import quote
 import urllib.request
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -62,6 +63,12 @@ def bare(symbol: str) -> str:
     """`BBCA.JK` / `bbca` -> `BBCA`. Every endpoint wants the bare ticker."""
     return (symbol or "").strip().upper().removesuffix(".JK")
 
+
+def _clean_commodity(name: str) -> str:
+    """Trim a commodity name. The API is case-insensitive ('gold' works) but a
+    trailing space is a URL error, so trimming is the fix and case is left alone
+    to keep the stored name identical to the API's own spelling."""
+    return (name or "").strip()
 
 def last_available_day() -> str:
     """The newest date the API will accept as an `end` bound.
@@ -275,6 +282,26 @@ class Sectors:
         rows = self._request(f"/v2/financials/quarterly/{bare(symbol)}/",
                              {"n_quarters": n_quarters}) or []
         return [flatten_financial_row(r) for r in rows]
+
+    def commodities(self) -> list[dict[str, Any]]:
+        """Every commodity the API prices, with its coverage window.
+
+        The window matters: 17 of the 18 stop at 2026-02-15 while Gold and Silver
+        run to 2026-09-01, so a "current" claim about most commodities is stale by
+        more than half a year. The caller must be able to see that.
+        """
+        return self._request("/v2/mining/commodities/", {}) or []
+
+    def commodity_prices(self, name: str, *, start_year: int, end_year: int) -> list[dict[str, Any]]:
+        """Monthly price history. The API rejects a range wider than 3 years."""
+        quoted = quote(_clean_commodity(name), safe="")
+        return self._request(f"/v2/mining/commodities/{quoted}/price/",
+                             {"start_year": start_year, "end_year": end_year}) or []
+
+    def commodity_production(self, name: str) -> list[dict[str, Any]]:
+        """Annual production for one commodity, newest year first as the API returns it."""
+        return self._request("/v2/mining/total-production/",
+                             {"commodity_type": _clean_commodity(name)}) or []
 
     def quarterly_dates(self, symbol: str) -> dict[str, Any]:
         return self._request(f"/v2/company/get_quarterly_financial_dates/{bare(symbol)}/", {}) or {}

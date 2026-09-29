@@ -82,16 +82,36 @@ class Service:
         return engines.make(choice, model=self.cfg.model)
 
     # -- theses ------------------------------------------------------------
-    def create_thesis(self, *, text: str, symbol: str | None = None, statement: str | None = None,
-                      company_name: str | None = None, horizon: str | None = None,
-                      engine_override: str | None = None, capture_baselines: bool = True,
-                      symbols_hint: str | None = None) -> dict[str, Any]:
+    def create_thesis(self, *, text: str, symbol: str | None = None, subject_type: str = "equity",
+                      statement: str | None = None, company_name: str | None = None,
+                      horizon: str | None = None, engine_override: str | None = None,
+                      capture_baselines: bool = True, symbols_hint: str | None = None) -> dict[str, Any]:
         """Turn a paragraph into a stored, checkable thesis."""
-        symbol = (symbol or symbols_hint or "").strip().upper().removesuffix(".JK")
-        if not symbol:
-            raise ValueError("a stock symbol is required")
+        subject_type = (subject_type or "equity").strip().lower()
+        if subject_type not in ("equity", "commodity"):
+            raise ValueError(f"unknown subject type: {subject_type!r}; use equity or commodity")
+
+        raw_sym = (symbol or symbols_hint or "").strip()
+        if not raw_sym:
+            field_label = "commodity name" if subject_type == "commodity" else "stock symbol"
+            raise ValueError(f"a {field_label} is required")
 
         budget = self._sectors(20)
+
+        if subject_type == "commodity":
+            try:
+                comms = budget.commodities()
+            except Exception as err:
+                raise ValueError(f"could not verify commodity with API: {err}") from err
+            known_names = [c.get("name") or "" for c in comms if c.get("name")]
+            match = next((n for n in known_names if n.strip().lower() == raw_sym.lower()), None)
+            if not match:
+                raise ValueError(f"unknown commodity {raw_sym!r}; known: {', '.join(sorted(known_names))}")
+            symbol = match
+            company_name = symbol
+        else:
+            symbol = raw_sym.upper().removesuffix(".JK")
+
         statement = (statement or text or "").strip()
         if not statement:
             raise ValueError("a thesis statement is required")
@@ -103,9 +123,9 @@ class Service:
         except EngineUnavailable as err:
             engine_note = str(err)
 
-        split = thesis_mod.decompose(statement, engine)
+        split = thesis_mod.decompose(statement, engine, subject_type=subject_type)
 
-        if not company_name:
+        if subject_type == "equity" and not company_name:
             try:
                 meta = budget.company_meta(symbol)
                 company_name = meta.get("company_name")
@@ -122,6 +142,7 @@ class Service:
 
         thesis_id = self.store.create_thesis({
             "symbol": symbol,
+            "subject_type": subject_type,
             "company_name": company_name,
             "statement": statement,
             "translation": json.dumps(split, ensure_ascii=False),
@@ -138,6 +159,10 @@ class Service:
         }
 
     def update_claims(self, thesis_id: str, claims: list[dict[str, Any]]) -> dict[str, Any]:
+        thesis = self.store.get_thesis(thesis_id)
+        if not thesis:
+            raise ValueError(f"no thesis {thesis_id}")
+        subject_type = thesis.get("subject_type") or "equity"
         clean = []
         for claim in claims:
             field = claim.get("metric")
@@ -145,11 +170,16 @@ class Service:
             resolved = metric_mod.normalise(field)
             if not resolved:
                 continue
+            default_cadence = (
+                "commodity_price" if resolved == "commodity_price"
+                else "production" if resolved == "production_volume"
+                else "quarterly"
+            ) if subject_type == "commodity" else "quarterly"
             clean.append({
                 "text": (claim.get("text") or field or "").strip(),
                 "metric": resolved,
                 "direction": claim.get("direction") or "up",
-                "cadence": claim.get("cadence") or "quarterly",
+                "cadence": claim.get("cadence") or default_cadence,
                 "threshold": claim.get("threshold"),
                 "threshold_target": claim.get("threshold_target") or "level",
                 "comparator": claim.get("comparator"),
@@ -340,6 +370,7 @@ class Service:
                 "watermark": thesis.get("watermark"),
                 "last_check": thesis.get("last_check"),
                 "changes": thesis.get("recent_changes") or [],
+                "subject_type": thesis.get("subject_type") or "equity",
             })
         return out
 
@@ -472,3 +503,34 @@ class Service:
 
     def notifications(self, *, unread_only: bool = False) -> list[dict[str, Any]]:
         return self.store.list_notifications(unread_only=unread_only)
+
+    def commodities(self) -> dict[str, Any]:
+        """Every commodity the API prices, with its coverage window and staleness.
+
+        Costs one credit unless cached, and the window is the point: the caller has
+        to be able to see that most commodities are months behind before writing a
+        thesis about one.
+        """
+        budget = self._sectors(2)
+        rows = budget.commodities()
+        out = []
+        for r in rows:
+            name = r.get("name")
+            if not name:
+                continue
+            latest = r.get("latest_date")
+            stale_days = 0
+            if latest:
+                try:
+                    stale_days = (date.today() - date.fromisoformat(latest)).days
+                except ValueError:
+                    stale_days = 0
+            out.append({
+                "name": name,
+                "data_points": r.get("data_points", 0),
+                "earliest_date": r.get("earliest_date"),
+                "latest_date": latest,
+                "stale_days": stale_days,
+            })
+        out.sort(key=lambda c: c["name"].lower())
+        return {"commodities": out, "credits": budget.budget.spent}

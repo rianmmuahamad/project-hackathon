@@ -26,10 +26,17 @@ from . import metrics
 from .engines import Engine, EngineUnavailable
 from .jsonx import extract_json as _extract_json
 
-CADENCES = ("quarterly", "price", "flow", "insider", "news", "corporate_action", "valuation")
+CADENCES = ("quarterly", "price", "flow", "insider", "news", "corporate_action", "valuation",
+            "commodity_price", "production")
 DIRECTIONS = ("up", "down", "flat", "none")
 
 KNOWN_METRICS = sorted(set(metrics.METRIC_ALIASES.values()))
+EQUITY_METRICS = KNOWN_METRICS
+COMMODITY_METRICS = ["commodity_price", "production_volume"]
+
+
+def known_metrics_for(subject_type: str) -> list[str]:
+    return COMMODITY_METRICS if subject_type == "commodity" else EQUITY_METRICS
 
 # A claim can be checkable without being a single API field. Valuation is the
 # case that matters: "still cheap against the big banks" needs a peer comparison,
@@ -57,7 +64,7 @@ PREAMBLE_RE = re.compile(
 )
 
 
-def decompose_offline(text: str) -> dict[str, Any]:
+def decompose_offline(text: str, *, subject_type: str = "equity") -> dict[str, Any]:
     """Split on sentence and conjunction boundaries, keep what has a metric."""
     claims: list[dict[str, Any]] = []
     unresolved: list[dict[str, Any]] = []
@@ -122,7 +129,11 @@ def _shape(text: str, field: str | None, direction: str | None = None,
     threshold_target = "growth" if (number is not None and GROWTH_RE.search(low)) else "level"
 
     if cadence is None:
-        if VALUATION_RE.search(low):
+        if field == "commodity_price":
+            cadence = "commodity_price"
+        elif field == "production_volume":
+            cadence = "production"
+        elif VALUATION_RE.search(low):
             cadence = "valuation"
         elif re.search(r"\b(asing|foreign flow|broker|akumulasi|accumulat|net buy)\b", low):
             cadence = "flow"
@@ -156,29 +167,35 @@ Rules:
 - `direction` is what the thesis asserts about the metric: up, down, flat, or none (when the thesis only mentions it).
 - If the thesis states a number ("tumbuh dua digit" = 10%, "di atas 5%"), put it in `threshold`. "dua digit" means 0.10. Set `threshold_target` to "growth" when the number describes a growth rate ("kredit tumbuh 10%") and "level" when it describes the value itself ("CAR di atas 20"). Getting this wrong makes the claim untestable.
 - `cadence` is the data family that would settle it: quarterly, price, flow, insider, news, corporate_action, valuation.
+- For a commodity subject the only allowed metrics are commodity_price (the monthly
+  price series) and production_volume (the annual production series). Map "harga naik
+  terus" to commodity_price with cadence "commodity_price", and "produksi naik" to
+  production_volume with cadence "production".
 - Ignore intent words (beli/jual/hold) — they are not claims. Record them in `unresolved` with the reason.
 - Reply with ONLY a JSON object, no prose, no code fence:
   {"claims": [{"text": "...", "metric": "...", "direction": "up", "cadence": "quarterly", "threshold": null, "comparator": null}],
    "unresolved": [{"text": "...", "reason": "..."}]}"""
 
 
-def decompose(text: str, engine: Engine | None = None) -> dict[str, Any]:
+def decompose(text: str, engine: Engine | None = None, *,
+              subject_type: str = "equity") -> dict[str, Any]:
     """Model-assisted decomposition, falling back to the heuristic on any failure."""
     if engine is None:
-        return decompose_offline(text)
+        return decompose_offline(text, subject_type=subject_type)
 
-    system = DECOMPOSE_SYSTEM + "\n\nAllowed metrics: " + ", ".join(KNOWN_METRICS)
+    allowed = known_metrics_for(subject_type)
+    system = DECOMPOSE_SYSTEM + "\n\nAllowed metrics: " + ", ".join(allowed)
     messages = [{"role": "user", "content": f"Thesis:\n{text}"}]
     try:
         turn = engine.reply(system, messages, tools=[])
     except EngineUnavailable as err:
-        out = decompose_offline(text)
+        out = decompose_offline(text, subject_type=subject_type)
         out["engine_error"] = str(err)
         return out
 
     parsed = _extract_json(turn.text)
     if not parsed or not isinstance(parsed.get("claims"), list):
-        out = decompose_offline(text)
+        out = decompose_offline(text, subject_type=subject_type)
         out["engine_error"] = "engine did not return usable JSON; used the offline splitter"
         out["raw_reply"] = turn.text[:800]
         return out
@@ -225,7 +242,7 @@ def decompose(text: str, engine: Engine | None = None) -> dict[str, Any]:
                                "reason": "not checkable with available data"})
 
     if not claims:
-        fallback = decompose_offline(text)
+        fallback = decompose_offline(text, subject_type=subject_type)
         fallback["engine_error"] = "engine returned no usable claims; used the offline splitter"
         return fallback
 

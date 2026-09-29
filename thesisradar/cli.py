@@ -89,8 +89,8 @@ def cmd_new(args) -> int:
         print("nothing to work with: pass the thesis as an argument or via --file", file=sys.stderr)
         return 2
     try:
-        out = service.create_thesis(text=text, symbol=args.symbol, horizon=args.horizon,
-                                    engine_override=args.engine,
+        out = service.create_thesis(text=text, symbol=args.symbol, subject_type=args.subject,
+                                    horizon=args.horizon, engine_override=args.engine,
                                     capture_baselines=not args.no_baseline)
     except (ValueError, JobBusy) as err:
         print(f"error: {err}", file=sys.stderr)
@@ -332,6 +332,23 @@ def cmd_serve(args) -> int:
     uvicorn.run("thesisradar.server:app", host=host, port=port, log_level="warning")
     return 0
 
+def cmd_commodities(args) -> int:
+    service = Service()
+    try:
+        data = service.commodities()
+    except Exception as err:
+        print(f"error: {err}", file=sys.stderr)
+        return 1
+    commodities = data.get("commodities") or []
+    print(f"Sectors mining commodities ({len(commodities)}):")
+    print(f"  {'Commodity':24} {'Data Points':12} {'Earliest':12} {'Latest':12} {'Staleness'}")
+    print("  " + "-" * 72)
+    for c in commodities:
+        stale = f"{c['stale_days']}d behind" if c['stale_days'] > 30 else "current"
+        print(f"  {c['name']:24} {c['data_points']:<12} {c.get('earliest_date') or '—':12} "
+              f"{c.get('latest_date') or '—':12} {stale}")
+    return 0
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="thesisradar", description=__doc__)
@@ -342,7 +359,10 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("new", help="write down a thesis and split it into checkable claims")
     p.add_argument("text", nargs="?", help="the thesis in plain language")
-    p.add_argument("--symbol", "-s", required=False, help="IDX ticker, e.g. BBRI")
+    p.add_argument("--subject", choices=["equity", "commodity"], default="equity",
+                   help="subject type (default: equity)")
+    p.add_argument("--symbol", "-s", required=False,
+                   help="IDX ticker for equity (e.g. BBRI), or commodity name (e.g. Nickel, Gold)")
     p.add_argument("--file", help="read the thesis from a file instead")
     p.add_argument("--horizon", default="2 quarters")
     p.add_argument("--engine", choices=["auto", "hermes", "direct"])
@@ -396,6 +416,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--send", action="store_true", help="actually send it")
     p.add_argument("--all", action="store_true", help="include notifications already read")
     p.set_defaults(func=cmd_digest)
+    p = sub.add_parser("commodities", help="list mining commodities priced by the API and their staleness")
+    p.set_defaults(func=cmd_commodities)
 
     args = parser.parse_args(argv)
     return args.func(args)

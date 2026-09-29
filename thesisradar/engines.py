@@ -106,7 +106,10 @@ class HermesEngine(Engine):
 
     def reply(self, system: str, messages: list[dict[str, Any]],
               tools: Sequence[dict[str, Any]]) -> Turn:
-        prompt = (system + "\n\n"
+        prompt = (system
+                  + "\n\nAVAILABLE TOOLS (call one per reply as a TOOL CALLS block):\n"
+                  + _tool_catalogue(tools)
+                  + "\n\n"
                   + "\n\n".join(_render(m) for m in messages if m.get("role") != "system"))
         # The prompt travels as argv rather than a temp file: one fewer artifact,
         # one fewer permission failure, and `hermes chat -q` takes it directly.
@@ -124,6 +127,12 @@ class HermesEngine(Engine):
                 f"hermes exited {proc.returncode}: {(proc.stderr or proc.stdout or '')[-400:]}"
             )
         return parse_text_turn(clean_stdout(proc.stdout or ""))
+
+def _tool_catalogue(tools: Sequence[dict[str, Any]]) -> str:
+    """The tool list a prompt-driven model needs but a native function-calling
+    endpoint does not: without it the model can only guess at tool names."""
+    return "\n".join(f"- {t.get('name')}({', '.join((t.get('parameters') or {}).get('properties') or {})})"
+                     f" — {t.get('description')}" for t in tools)
 
 
 def _render(message: dict[str, Any]) -> str:

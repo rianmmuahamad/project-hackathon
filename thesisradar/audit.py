@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from . import metrics, tools
 from .config import settings
@@ -39,11 +40,14 @@ MAX_TOOL_ROUNDS = 3
 # comparison, the quarterly shape around it, and enough history to notice that a
 # reported series has been restated rather than having moved.
 QUARTER_WINDOW = 12
+STALE_DAYS = 120
+
+_MEASURABLE_CADENCES = {"quarterly", "valuation", "commodity_price", "production"}
 
 # Cadences code cannot settle from a single reported field. Valuation claims are
 # the case that matters: "cheap versus peers" needs the agent plus guardrails,
 # while a claim measured from a quarterly series does not.
-_SETTLEABLE_CADENCES = {"quarterly"}
+_SETTLEABLE_CADENCES = {"quarterly", "commodity_price", "production"}
 
 MAX_JEV_CLAIMS = 12           # one question per claim, all in a single call
 TOOL_CALLS_WHEN_ASSISTED = 2  # budget for the agent when Jev already decided
@@ -108,6 +112,56 @@ class Measurement:
 # --------------------------------------------------------------------------
 # watermark
 # --------------------------------------------------------------------------
+def _commodity_watermark(thesis: dict[str, Any], sectors: Sectors) -> tuple[str, list[dict[str, Any]]]:
+    name = (thesis.get("symbol") or "").strip()
+    evidence: list[dict[str, Any]] = []
+    try:
+        commodities = sectors.commodities()
+    except Exception:
+        commodities = []
+
+    target = next((c for c in commodities if (c.get("name") or "").strip().lower() == name.lower()), None)
+    if not target or not target.get("latest_date"):
+        return date.today().isoformat(), evidence
+
+    latest_date = target["latest_date"]
+    endpoint = f"/v2/mining/commodities/{quote(target.get('name') or name, safe='')}/price/"
+    evidence.append({
+        "symbol": name, "metric": "latest_commodity_price",
+        "value": latest_date, "as_of": latest_date,
+        "endpoint": endpoint, "params": {},
+        "note": f"newest price observation on file ({target.get('data_points', 0)} total points)",
+    })
+
+    try:
+        prod_rows = sectors.commodity_production(name)
+    except Exception:
+        prod_rows = []
+    if prod_rows:
+        latest_prod = prod_rows[0]
+        prod_year = str(latest_prod.get("year") or "")
+        if prod_year:
+            evidence.append({
+                "symbol": name, "metric": "latest_production_year",
+                "value": prod_year, "as_of": prod_year,
+                "endpoint": "/v2/mining/total-production/",
+                "params": {"commodity_type": name},
+                "note": f"annual production {latest_prod.get('production_volume')} {latest_prod.get('unit', '')} ({latest_prod.get('yoy_change_percent', 0):+.1f}% YoY)",
+            })
+
+    try:
+        stale_days = (date.today() - date.fromisoformat(latest_date)).days
+    except ValueError:
+        stale_days = 0
+
+    if stale_days > STALE_DAYS:
+        watermark = latest_date
+    else:
+        watermark = date.today().isoformat()
+
+    return watermark, evidence
+
+
 def compute_watermark(thesis: dict[str, Any], sectors: Sectors, days: int = 45,
                      quarterly_rows: list[dict[str, Any]] | None = None) -> tuple[str, list[dict[str, Any]]]:
     """The date the agent should look forward from, and the evidence for it.
@@ -115,6 +169,9 @@ def compute_watermark(thesis: dict[str, Any], sectors: Sectors, days: int = 45,
     A thesis is only interesting *since the last time it was checked*. Using the
     previous check's date means a re-check costs nothing and reads nothing twice.
     """
+    if (thesis.get("subject_type") or "equity") == "commodity":
+        return _commodity_watermark(thesis, sectors)
+
     symbol = thesis["symbol"]
     previous = (thesis.get("watermark") or "").strip()
     since = previous or (date.today() - timedelta(days=days)).isoformat()
@@ -154,16 +211,85 @@ def compute_watermark(thesis: dict[str, Any], sectors: Sectors, days: int = 45,
 # --------------------------------------------------------------------------
 # deterministic measurement
 # --------------------------------------------------------------------------
+def _commodity_series(thesis: dict[str, Any], sectors: Sectors) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Fetch and merge a commodity's price and production series into claim-addressable rows."""
+    name = (thesis.get("symbol") or "").strip()
+    this_year = date.today().year
+    price_rows: list[dict[str, Any]] = []
+    prod_rows: list[dict[str, Any]] = []
+    try:
+        price_rows = sectors.commodity_prices(name, start_year=this_year - 2, end_year=this_year)
+    except Exception:
+        price_rows = []
+    try:
+        prod_rows = sectors.commodity_production(name)
+    except Exception:
+        prod_rows = []
+
+    clean_prices: list[dict[str, Any]] = []
+    for r in price_rows:
+        if r.get("date") and r.get("price_usd_per_ton") is not None:
+            clean_prices.append({
+                "date": str(r["date"]),
+                "commodity_price": float(r["price_usd_per_ton"]),
+            })
+    clean_prices.sort(key=lambda r: r["date"])
+
+    clean_prod: list[dict[str, Any]] = []
+    for r in prod_rows:
+        year = r.get("year")
+        if year is not None and r.get("production_volume") is not None:
+            clean_prod.append({
+                "date": str(year),
+                "production_volume": float(r["production_volume"]),
+                "production_year": str(year),
+                "unit": r.get("unit", "Mt"),
+                "api_yoy": r.get("yoy_change_percent"),
+            })
+    clean_prod.sort(key=lambda r: r["date"])
+
+    merged = clean_prices + clean_prod
+    meta: dict[str, Any] = {
+        "name": name,
+        "clean_prod": clean_prod,
+        "latest_price_date": clean_prices[-1]["date"] if clean_prices else None,
+        "latest_prod_year": clean_prod[-1]["production_year"] if clean_prod else None,
+        "prod_unit": clean_prod[-1]["unit"] if clean_prod else "Mt",
+    }
+    return merged, meta
+
+
 def measure(thesis: dict[str, Any], sectors: Sectors,
             quarterly_rows: list[dict[str, Any]] | None = None) -> tuple[list[Measurement], list[dict[str, Any]]]:
     """Compute each claim's state from reported numbers. No model involved."""
     symbol = thesis["symbol"]
+    subject_type = thesis.get("subject_type") or "equity"
+    commodity = subject_type == "commodity"
+    subject_is_equity = not commodity
     measurements: list[Measurement] = []
     evidence: list[dict[str, Any]] = []
 
+    commodity_meta: dict[str, Any] = {}
     rows = quarterly_rows
     quarterly_error: str | None = None
-    if rows is None:
+    if commodity:
+        rows, commodity_meta = _commodity_series(thesis, sectors)
+        latest_price_date = commodity_meta.get("latest_price_date")
+        if latest_price_date:
+            try:
+                stale_days = (date.today() - date.fromisoformat(latest_price_date)).days
+            except ValueError:
+                stale_days = 0
+            if stale_days > STALE_DAYS:
+                evidence.append({
+                    "symbol": symbol, "metric": "commodity_price staleness",
+                    "value": f"{stale_days} days behind",
+                    "as_of": latest_price_date,
+                    "endpoint": f"/v2/mining/commodities/{quote(symbol, safe='')}/price/",
+                    "params": {"start_year": date.today().year - 2, "end_year": date.today().year},
+                    "note": f"newest observation is {latest_price_date} ({stale_days} days ago) — series published up to that date only",
+                })
+    elif rows is None:
         try:
             rows = sectors.quarterly(symbol, n_quarters=QUARTER_WINDOW)
         except SectorsError as err:
@@ -173,28 +299,51 @@ def measure(thesis: dict[str, Any], sectors: Sectors,
     for claim in thesis.get("claims") or []:
         field_name = metrics.normalise(claim.get("metric"))
         ordinal = int(claim.get("ordinal") or 0)
+        cadence = (claim.get("cadence") or "quarterly").lower()
         base = Measurement(claim_id=claim["id"], ordinal=ordinal, text=claim.get("text") or "",
                            metric=field_name, state=UNKNOWN)
 
-        if not field_name or claim.get("cadence") not in ("quarterly", "valuation"):
+        if not field_name or cadence not in _MEASURABLE_CADENCES:
             base.rationale = ("Not measured here: this claim is not a quarterly report metric, "
                               "so it has to be settled with tools and judgement.")
             measurements.append(base)
             continue
 
-        if claim.get("cadence") == "valuation":
+        if cadence == "valuation":
             base.rationale = ("Relative valuation cannot be read from one field; the agent must "
                               "compare this company against its peers with sector_context.")
             measurements.append(base)
             continue
 
-        if rows is None:
+        if commodity and cadence == "quarterly":
+            base.rationale = ("Not measured here: quarterly financials do not exist for commodities; "
+                              "use commodity_price or production cadence.")
+            measurements.append(base)
+            continue
+
+        if not commodity and cadence in ("commodity_price", "production"):
+            base.rationale = ("Not measured here: commodity price and production cadences are for commodities, "
+                              "not equity financials.")
+            measurements.append(base)
+            continue
+
+        if commodity and (
+            (cadence == "commodity_price" and field_name != "commodity_price") or
+            (cadence == "production" and field_name != "production_volume")
+        ):
+            base.rationale = (f"Not measured here: cadence {cadence} requires matching field "
+                              f"({'commodity_price' if cadence == 'commodity_price' else 'production_volume'}), "
+                              f"got {field_name}.")
+            measurements.append(base)
+            continue
+
+        if not commodity and rows is None:
             base.rationale = "Quarterly financials could not be fetched for this check."
             measurements.append(base)
             continue
 
         series = metrics.series_of(rows, field_name)
-        if not series:
+        if not series and not commodity:
             resolved, _note = metrics.with_fallback(
                 field_name, lambda name: bool(metrics.series_of(rows, name)))
             if resolved != field_name:
@@ -202,7 +351,13 @@ def measure(thesis: dict[str, Any], sectors: Sectors,
                 series = metrics.series_of(rows, field_name)
 
         if not series:
-            base.rationale = f"The API reports no {field_name} for {symbol}."
+            suffix = ""
+            if commodity:
+                if cadence == "commodity_price" and commodity_meta.get("latest_price_date"):
+                    suffix = f" (latest price data: {commodity_meta['latest_price_date']})"
+                elif cadence == "production" and commodity_meta.get("latest_prod_year"):
+                    suffix = f" (latest production data: {commodity_meta['latest_prod_year']})"
+            base.rationale = f"The API reports no {field_name} for {symbol}.{suffix}"
             measurements.append(base)
             continue
 
@@ -210,7 +365,8 @@ def measure(thesis: dict[str, Any], sectors: Sectors,
         base.observed_value = latest["value"]
         base.observed_date = latest["date"]
 
-        yoy_index = len(series) - 5 if len(series) >= 5 else 0
+        periods = metrics.PERIODS_PER_YEAR.get(cadence, 4)
+        yoy_index = len(series) - 1 - periods if len(series) > periods else 0
         yoy_point = series[yoy_index] if len(series) > 1 else None
         if yoy_point and yoy_point.get("value"):
             base.delta = metrics.pct_change(latest["value"], yoy_point["value"])
@@ -233,14 +389,26 @@ def measure(thesis: dict[str, Any], sectors: Sectors,
                 f"rather than trading. A year-on-year comparison would span that break, so this "
                 f"claim cannot be measured from the series as published."
             )
+            endpoint = (
+                f"/v2/mining/commodities/{quote(symbol, safe='')}/price/"
+                if cadence == "commodity_price"
+                else "/v2/mining/total-production/" if cadence == "production"
+                else f"/v2/financials/quarterly/{symbol}/"
+            )
+            params = (
+                {"start_year": date.today().year - 2, "end_year": date.today().year}
+                if cadence == "commodity_price"
+                else {"commodity_type": symbol} if cadence == "production"
+                else {"n_quarters": QUARTER_WINDOW}
+            )
             base.evidence.append({
                 "symbol": symbol, "metric": f"{field_name} discontinuity",
-                "value": (f"{metrics.describe(series[broken_at]['value'])} from "
-                          f"{metrics.describe(earlier['value'])}"),
+                "value": (f"{metrics.describe(series[broken_at]['value'], currency=subject_is_equity)} from "
+                          f"{metrics.describe(earlier['value'], currency=subject_is_equity)}"),
                 "as_of": series[broken_at]["date"],
-                "endpoint": f"/v2/financials/quarterly/{symbol}/",
-                "params": {"n_quarters": QUARTER_WINDOW},
-                "note": (f"{jump * 100:+.1f}% in one quarter, outside the "
+                "endpoint": endpoint,
+                "params": params,
+                "note": (f"{jump * 100:+.1f}% in one observation, outside the "
                          f"+{growth_band:.0%}/-{drop_band:.0%} band for this metric — treated as "
                          f"a definitional break"),
             })
@@ -270,25 +438,55 @@ def measure(thesis: dict[str, Any], sectors: Sectors,
                                            claim.get("threshold"))
 
         base.state, base.rationale = _judge_claim(claim, base, trending, threshold_ok, series)
+
+        endpoint = (
+            f"/v2/mining/commodities/{quote(symbol, safe='')}/price/"
+            if cadence == "commodity_price"
+            else "/v2/mining/total-production/" if cadence == "production"
+            else f"/v2/financials/quarterly/{symbol}/"
+        )
+        params = (
+            {"start_year": date.today().year - 2, "end_year": date.today().year}
+            if cadence == "commodity_price"
+            else {"commodity_type": symbol} if cadence == "production"
+            else {"n_quarters": 12}
+        )
+        unit_suffix = (
+            " USD/ton" if cadence == "commodity_price"
+            else f" {commodity_meta.get('prod_unit', 'Mt')}" if cadence == "production"
+            else ""
+        )
         base.evidence.append({
             "symbol": symbol, "metric": field_name,
-            "value": metrics.describe(latest["value"]), "as_of": latest["date"],
-            "endpoint": f"/v2/financials/quarterly/{symbol}/",
-            "params": {"n_quarters": 12},
+            "value": f"{metrics.describe(latest['value'], currency=subject_is_equity)}{unit_suffix}",
+            "as_of": latest["date"],
+            "endpoint": endpoint,
+            "params": params,
             "note": f"latest reported; {_delta_text(base.delta)} YoY",
         })
         if claim.get("baseline_value") is not None:
             base.evidence.append({
                 "symbol": symbol, "metric": f"{field_name} at thesis time",
-                "value": metrics.describe(claim.get("baseline_value")),
+                "value": f"{metrics.describe(claim.get('baseline_value'), currency=subject_is_equity)}{unit_suffix}",
                 "as_of": claim.get("baseline_date"),
-                "endpoint": f"/v2/financials/quarterly/{symbol}/",
-                "params": {"n_quarters": 12},
+                "endpoint": endpoint,
+                "params": params,
                 "note": "recorded when the thesis was written",
             })
+        if cadence == "production":
+            clean_prod = commodity_meta.get("clean_prod") or []
+            api_yoy = next((r.get("api_yoy") for r in clean_prod if str(r.get("date")) == str(latest["date"])), None)
+            if api_yoy is not None:
+                base.evidence.append({
+                    "symbol": symbol, "metric": "production_volume api_yoy",
+                    "value": f"{api_yoy:+.2f}%",
+                    "as_of": latest["date"],
+                    "endpoint": endpoint,
+                    "params": params,
+                    "note": "as reported by the API",
+                })
         evidence.extend(base.evidence)
         measurements.append(base)
-
     return measurements, evidence
 
 
@@ -772,7 +970,7 @@ def run(thesis_id: str, *, engine: Engine, store: Store, sectors: Sectors,
         # no credits, it is always relevant, and making it conditional would let a
         # paid call happen before the product's own memory was consulted.
         try:
-            prior = tools.execute("evidence_ledger", {"symbol": thesis["symbol"]}, sectors, store)
+            prior = tools.execute("evidence_ledger", {"symbol": thesis["symbol"]}, sectors, store, thesis=thesis)
             ledger_row = {"name": "evidence_ledger", "args": {"symbol": thesis["symbol"]},
                           "credits": prior.get("credits", 0), "result": prior.get("result")}
             steps.append(ledger_row)
@@ -850,7 +1048,7 @@ def run(thesis_id: str, *, engine: Engine, store: Store, sectors: Sectors,
             seen_calls.add(fingerprint)
 
             emit("tool", {"tool": name, "args": args, "round": round_no + 1})
-            outcome = tools.execute(name, args, sectors, store)
+            outcome = tools.execute(name, args, sectors, store, thesis=thesis)
             step_record = {"name": name, "args": args,
                            "credits": outcome.get("credits", 0),
                            "result": outcome.get("result", outcome.get("error"))}

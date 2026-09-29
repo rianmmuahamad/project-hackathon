@@ -178,6 +178,7 @@ def create_thesis(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         SERVICE.create_thesis,
         text=str(payload.get("statement") or payload.get("text") or ""),
         symbol=payload.get("symbol"),
+        subject_type=payload.get("subject_type") or "equity",
         statement=payload.get("statement"),
         company_name=payload.get("company_name"),
         horizon=payload.get("horizon"),
@@ -237,6 +238,10 @@ def mark_read(payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
 @app.get("/api/draft")
 def draft(subsector: str = "banks", count: int = 3) -> dict[str, Any]:
     return _guard(SERVICE.suggest_theses, sub_sector=subsector, count=count)
+
+@app.get("/api/commodities")
+def commodities() -> dict[str, Any]:
+    return _guard(SERVICE.commodities)
 
 
 # --------------------------------------------------------------------------

@@ -5,6 +5,7 @@
  */
 import type {
   CheckDetail,
+  Commodity,
   Decomposition,
   DraftResponse,
   Job,
@@ -62,7 +63,8 @@ export const api = {
       `/api/draft?subsector=${encodeURIComponent(subsector)}&count=${count}`,
     ),
 
-  createThesis: (body: { statement: string; symbol: string; horizon?: string }) =>
+  commodities: () => request<{ commodities: Commodity[]; credits: number }>("/api/commodities"),
+  createThesis: (body: { statement: string; symbol: string; horizon?: string; subject_type?: "equity" | "commodity" }) =>
     request<{ thesis: ThesisDetail; decomposition: Decomposition; engine_note: string | null; credits: number }>(
       "/api/thesis",
       { method: "POST", body: JSON.stringify(body) },

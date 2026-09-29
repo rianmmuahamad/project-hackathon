@@ -85,10 +85,11 @@ class StubSectors(Sectors):
     metrics series that silently came back empty looked like a product bug.
     """
 
-    def __init__(self, broken_series: bool = False) -> None:
+    def __init__(self, broken_series: bool = False, low_production: bool = False) -> None:
         super().__init__(api_key="stub", budget=Budget(), cache=_MemoryCache(), ledger=_NoLedger())
         self.asked: list[str] = []
         self.broken_series = broken_series
+        self.low_production = low_production
 
     def _request(self, path: str, params: dict):  # type: ignore[override]
         # Mirror the real client's caching so repeat requests cost nothing.
@@ -138,6 +139,29 @@ class StubSectors(Sectors):
                 {"symbol": "BMRI.JK", "company_name": "PT Bank Mandiri Tbk",
                  "query_values": {"sub_sector": "Banks"}}],
                 "pagination": {}}
+        if path == "/v2/mining/commodities/":
+            return [{"name": "Nickel", "data_points": 113,
+                     "earliest_date": "2017-10-01", "latest_date": "2026-02-15"},
+                    {"name": "Coal", "data_points": 194,
+                     "earliest_date": "2011-01-01", "latest_date": "2026-02-15"}]
+        if path.startswith("/v2/mining/commodities/") and path.endswith("/price/"):
+            prices = []
+            for y in (2024, 2025):
+                for m in range(1, 13):
+                    prices.append({"name": "Nickel", "date": f"{y}-{m:02d}-01", "price_usd_per_ton": 15000 + (y - 2024) * 1200 + m * 50})
+            for m in range(1, 3):
+                prices.append({"name": "Nickel", "date": f"2026-{m:02d}-01", "price_usd_per_ton": 17400 + m * 100})
+            return prices
+        if path == "/v2/mining/total-production/":
+            if self.low_production:
+                return [{"year": 2025, "production_volume": 206.4, "prev_year_volume": 198.5,
+                         "unit": "Mt", "yoy_change_percent": 4.0},
+                        {"year": 2024, "production_volume": 198.5, "prev_year_volume": 137.8,
+                         "unit": "Mt", "yoy_change_percent": 44.05}]
+            return [{"year": 2025, "production_volume": 220.0, "prev_year_volume": 198.5,
+                     "unit": "Mt", "yoy_change_percent": 10.83},
+                    {"year": 2024, "production_volume": 198.5, "prev_year_volume": 137.8,
+                     "unit": "Mt", "yoy_change_percent": 44.05}]
         if path.startswith("/v2/subsector/report/"):
             return {"statistics": {"total_companies": 48}}
         if path.startswith("/v2/broker-summary/"):
@@ -630,6 +654,79 @@ def main() -> int:
                 os.environ.pop("THESISRADAR_SMTP_TO", None)
                 store5.close()
                 service5.stop_schedule()
+
+        print("\ncommodity subjects")
+        with tempfile.TemporaryDirectory() as tmp_c:
+            store_c = Store(path=Path(tmp_c) / "radar.db")
+            sectors_c = StubSectors()
+            service_c = Service(store=store_c)
+            service_c._sectors = lambda budget: sectors_c
+
+            # 1. create_thesis stores subject_type='commodity' and preserves symbol casing
+            theses_before = store_c.stats()["theses"]
+            out_c = service_c.create_thesis(
+                subject_type="commodity", symbol="Nickel",
+                text="Harga nikel naik terus dan produksi nasional tumbuh minimal 10%",
+            )
+            check(out_c["thesis"]["subject_type"] == "commodity" and out_c["thesis"]["symbol"] == "Nickel",
+                  "commodity thesis is stored with subject_type='commodity' and exact symbol casing")
+
+            # 2. Unknown commodity typo raises ValueError naming known commodities; no thesis written
+            typo_caught = False
+            try:
+                service_c.create_thesis(subject_type="commodity", symbol="Unobtainium", text="something")
+            except ValueError as err:
+                typo_caught = "Nickel" in str(err) and "unknown commodity" in str(err)
+            check(typo_caught and store_c.stats()["theses"] == theses_before + 1,
+                  "creating an unknown commodity raises ValueError naming known commodities and stores no row")
+
+            # 3. Claims carry commodity_price and production cadences
+            claims = out_c["thesis"]["claims"]
+            check(len(claims) == 2, "thesis statement was split into 2 claims")
+            cadences = {c["cadence"] for c in claims}
+            check(cadences == {"commodity_price", "production"},
+                  f"claims carry commodity_price and production cadences (got {cadences})")
+
+            # 4. audit.run yields per-claim state, decision_path, never 'not a quarterly report metric'
+            run_res = audit.run(out_c["thesis"]["id"], engine=RecordingEngine(verdict={"summary": "ok", "confidence": 0.8}),
+                                store=store_c, sectors=sectors_c, jev=StubJev(decidable="none"))
+            detail_c = store_c.check_detail(run_res["check_id"])
+            rationales = [r["rationale"] for r in detail_c["claim_results"]]
+            check(not any("not a quarterly report metric" in rat for rat in rationales),
+                  "dispatch gate was widened: no commodity claim got 'not a quarterly report metric'")
+            check(run_res["decision_path"] in {"measurement", "jev", "jev+agent"},
+                  f"commodity run reports valid decision_path ({run_res['decision_path']})")
+
+            # 5. Production claim measured against annual data: +10.83% clears >=10% -> supported;
+            #    with low_production (+4.0%) it must be broken.
+            prod_claim = next(r for r in detail_c["claim_results"] if r["ordinal"] == 1)
+            check(prod_claim["state"] == "supported",
+                  f"production claim clears >=10% threshold with +10.83% YoY (got {prod_claim['state']})")
+
+            # Test broken threshold with low production
+            sectors_low = StubSectors(low_production=True)
+            m_low, _ = audit.measure(out_c["thesis"], sectors_low)
+            prod_m_low = next(m for m in m_low if m.metric == "production_volume")
+            check(prod_m_low.state == "broken",
+                  f"production claim arithmetic fails >=10% threshold with +4.0% YoY and is marked broken (got {prod_m_low.state})")
+            run_low = audit.run(out_c["thesis"]["id"], engine=RecordingEngine(verdict={"summary": "ok", "confidence": 0.8}),
+                                store=store_c, sectors=sectors_low,
+                                jev=StubJev(states={0: ("supported", 0.95), 1: ("broken", 0.95)}, decidable="none"))
+            detail_low = store_c.check_detail(run_low["check_id"])
+            prod_low = next(r for r in detail_low["claim_results"] if r["ordinal"] == 1)
+            check(prod_low["state"] == "broken",
+                  f"production claim fails >=10% threshold with +4.0% YoY and is marked broken (got {prod_low['state']})")
+            # 6. Evidence for commodity price contains no 'Rp'
+            price_ev = [e for e in detail_c["evidence"] if e["metric"] == "commodity_price"]
+            check(bool(price_ev) and not any("Rp" in str(e["value"]) for e in price_ev),
+                  "commodity price evidence row carries no 'Rp' currency prefix")
+
+            # 7. compute_watermark for stale commodity returns latest_date and attaches staleness row
+            wm, wm_ev = audit.compute_watermark(out_c["thesis"], sectors_c)
+            check(wm == "2026-02-15", f"stale commodity watermark returns latest_date 2026-02-15 (got {wm})")
+            has_price_rec = any(e["metric"] == "latest_commodity_price" for e in wm_ev)
+            check(has_price_rec, "commodity watermark attaches latest_commodity_price evidence row")
+            store_c.close()
 
         print("\nengine fallback")
         availability = engines.describe()

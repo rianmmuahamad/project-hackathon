@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS theses (
     created_at      TEXT NOT NULL,
     last_checked_at TEXT,
     watermark       TEXT,
-    run_id          TEXT
+    run_id          TEXT,
+    subject_type    TEXT DEFAULT 'equity'
 );
 CREATE INDEX IF NOT EXISTS idx_theses_symbol ON theses(symbol);
 
@@ -179,10 +180,13 @@ class Store:
         so a database created before a column was introduced would silently lack
         it. The demo database predates the decision layer and must keep working.
         """
-        existing = {row["name"] for row in self.q("PRAGMA table_info(checks)")}
+        checks = {row["name"] for row in self.q("PRAGMA table_info(checks)")}
         for name in ("decision_path", "confidence_source"):
-            if name not in existing:
+            if name not in checks:
                 self.x(f"ALTER TABLE checks ADD COLUMN {name} TEXT")
+        theses = {row["name"] for row in self.q("PRAGMA table_info(theses)")}
+        if "subject_type" not in theses:
+            self.x("ALTER TABLE theses ADD COLUMN subject_type TEXT DEFAULT 'equity'")
 
     # -- low level ---------------------------------------------------------
     def q(self, sql: str, args: Iterable[Any] = ()) -> list[sqlite3.Row]:
@@ -201,13 +205,16 @@ class Store:
     # -- theses ------------------------------------------------------------
     def create_thesis(self, payload: dict[str, Any]) -> str:
         tid = payload.get("id") or new_id("th")
+        subject_type = payload.get("subject_type") or "equity"
+        subject = payload["symbol"].strip() if subject_type == "commodity" else payload["symbol"].strip().upper().removesuffix(".JK")
         self.x(
             """INSERT INTO theses (id, symbol, company_name, statement, translation, horizon,
-                   sector, sub_sector, source, watch, status, confidence, created_at, watermark)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   sector, sub_sector, source, watch, status, confidence, created_at, watermark,
+                   subject_type)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 tid,
-                payload["symbol"].upper(),
+                subject,
                 payload.get("company_name"),
                 payload["statement"],
                 payload.get("translation"),
@@ -220,6 +227,7 @@ class Store:
                 payload.get("confidence"),
                 now(),
                 payload.get("watermark"),
+                subject_type,
             ),
         )
         for i, claim in enumerate(payload.get("claims") or []):
@@ -265,9 +273,11 @@ class Store:
         rows = self.q("SELECT * FROM theses WHERE id=?", (needle,))
         if rows:
             return self._thesis_bundle(rows[0])
+        clean = needle.strip()
+        equity_sym = clean.upper().removesuffix(".JK")
         rows = self.q(
-            "SELECT * FROM theses WHERE symbol=? ORDER BY created_at DESC LIMIT 1",
-            (needle.strip().upper().removesuffix(".JK"),),
+            "SELECT * FROM theses WHERE symbol COLLATE NOCASE = ? OR symbol COLLATE NOCASE = ? ORDER BY created_at DESC LIMIT 1",
+            (equity_sym, clean),
         )
         return self._thesis_bundle(rows[0]) if rows else None
 
