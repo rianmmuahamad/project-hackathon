@@ -6,9 +6,16 @@ import { ComposePage } from "./pages/ComposePage";
 import { NotificationsPage } from "./pages/NotificationsPage";
 import { QueuePage } from "./pages/QueuePage";
 import { ThesisWorkspace } from "./pages/ThesisWorkspace";
+import { STATUS_LABEL } from "./format";
 import type { Job, QueueRow, Stats } from "./types";
 
 type View = { name: "queue" } | { name: "thesis"; id: string } | { name: "new" } | { name: "notifications" };
+
+const NAV: Array<[View["name"], string]> = [
+  ["queue", "Queue"],
+  ["new", "New thesis"],
+  ["notifications", "Notifications"],
+];
 
 function parseHash(): View {
   const hash = window.location.hash.replace(/^#\/?/, "");
@@ -19,19 +26,15 @@ function parseHash(): View {
   return { name: "queue" };
 }
 
-const HREF: Record<View["name"], string> = {
-  queue: "#/queue",
-  thesis: "#/thesis",
-  new: "#/new",
-  notifications: "#/notifications",
-};
-
 export function App() {
   const [view, setView] = useState<View>(parseHash);
   const [stats, setStats] = useState<Stats | null>(null);
   const [job, setJob] = useState<Job | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
   const [fatal, setFatal] = useState<string | null>(null);
+  const [menu, setMenu] = useState(false);
+  const [dock, setDock] = useState(true);
+  const [rail, setRail] = useState(true);
 
   const refresh = useCallback(async () => {
     try {
@@ -45,7 +48,10 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    const onHash = () => setView(parseHash());
+    const onHash = () => {
+      setView(parseHash());
+      setMenu(false);
+    };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -56,90 +62,175 @@ export function App() {
 
   const bump = useCallback(() => setRefreshToken((n) => n + 1), []);
 
+  const [checkBusy, setCheckBusy] = useState(false);
+  async function checkAll() {
+    setCheckBusy(true);
+    try {
+      await api.checkAll({});
+      bump();
+    } catch (error) {
+      setFatal(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCheckBusy(false);
+    }
+  }
+
   useEffect(() => {
     if (job?.state !== "running") return;
     const timer = window.setInterval(() => void refresh(), 5000);
     return () => window.clearInterval(timer);
   }, [job?.state, refresh]);
 
+  useEffect(() => {
+    if (!menu) return;
+    const close = (event: MouseEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".navpills, .hamburger")) return;
+      setMenu(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenu(false);
+    };
+    document.addEventListener("click", close);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("click", close);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menu]);
+
+  const running = job?.state === "running";
   const engine = stats?.engine ?? {};
-  const live = Object.entries(engine).find(([, info]) => info.available)?.[0] ?? "none";
+  const engineName = Object.entries(engine).find(([, info]) => info.available)?.[0] ?? "none";
+  const jev = stats?.jev;
+  const unread = stats?.store.unread ?? 0;
+  const withRail = view.name === "thesis";
 
   return (
     <div className="app">
-      <header className="top">
-        <div className="brand">
-          Thesis Radar<span>does the thesis still hold?</span>
+      <header className="topnav">
+        <div className="topnav-left">
+          <a className="brand" href="#/queue">
+            <span className="brand-mark">Thesis Radar</span>
+            <span className="brand-sub">does the thesis still hold?</span>
+          </a>
         </div>
-        <nav>
-          <a href={HREF.queue} className={view.name === "queue" ? "active" : ""}>
-            Antrian
-          </a>
-          <a href={HREF.new} className={view.name === "new" ? "active" : ""}>
-            Tesis baru
-          </a>
-          <a href={HREF.notifications} className={view.name === "notifications" ? "active" : ""}>
-            Notifikasi
-            {stats && stats.store.unread > 0 && <span className="chip unknown" style={{ marginLeft: 6 }}>{stats.store.unread}</span>}
-          </a>
+
+        <nav className={`navpills${menu ? " open" : ""}`} aria-label="primary">
+          {NAV.map(([name, label]) => (
+            <a key={name} href={`#/${name}`} className={`navpill${view.name === name ? " on" : ""}`}>
+              {label}
+              {name === "notifications" && unread > 0 && <b className="navcount">{unread}</b>}
+            </a>
+          ))}
         </nav>
-        <span className="spacer" />
-        <div className="meta">
-          <span title="reasoning engine driving the loop">
-            engine <strong>{live}</strong>
-          </span>
-          <span title="TypeSafe System One decides each claim from measured evidence">
-            jev{" "}
-            <strong>
-              {stats?.jev?.available ? (stats.jev.model ?? "on") : "off"}
-            </strong>
-          </span>
-          <span title="Sectors API credits spent across every call this project has made">
-            {stats ? `${stats.credits.credits_spent} credits` : "—"}
-          </span>
-          <span title="checks run">
-            {stats ? `${stats.store.checks} checks` : "—"}
-          </span>
+
+        <div className="topnav-right">
+          <button
+            className="btn btn-ghost btn-icon hamburger"
+            aria-label="Open menu"
+            aria-expanded={menu}
+            onClick={() => setMenu(!menu)}
+          >
+            ☰
+          </button>
+          {!dock && (
+            <button className="dock-peek" onClick={() => setDock(true)} title="Show agent log">
+              {running ? <i className="pulse" /> : <i className="dot dot-unknown" />}
+              <span>{running ? "running" : "idle"}</span>
+            </button>
+          )}
+          <div className="navcta">
+            <button className="btn btn-primary" onClick={() => void checkAll()} disabled={checkBusy || running}>
+              {running ? "Running..." : "Check all"}
+            </button>
+          </div>
+          {dock && (
+            <button
+              className="btn btn-secondary btn-icon dock-toggle"
+              aria-label="Agent log"
+              aria-expanded={dock}
+              onClick={() => setDock(false)}
+            >
+              {running ? <i className="pulse" /> : <i className="dot dot-unknown" />}
+            </button>
+          )}
         </div>
       </header>
 
       {fatal && (
-        <div className="banner bad" style={{ margin: 0, borderRadius: 0 }}>
+        <div className="banner banner-bad" style={{ margin: "12px 20px" }}>
           {fatal}
         </div>
       )}
 
-      <div className={`body${view.name === "thesis" ? "" : " solo"}`}>
-        {view.name === "thesis" && (
-          <aside className="rail">
-            <div className="rail-head">
-              <span>theses</span>
-              <button onClick={() => void api.checkAll({}).then(bump)} disabled={job?.state === "running"}>
-                check all
-              </button>
-            </div>
-            <Rail onNavigate={bump} refreshToken={refreshToken} selectedId={view.id} />
-          </aside>
-        )}
+      <div
+        className={`work${withRail ? " with-rail" : ""}${withRail && !rail ? " rail-hidden" : ""}${dock ? "" : " dock-hidden"}`}
+      >
+        {withRail && <Rail selectedId={view.id} refreshToken={refreshToken} collapsed={!rail} onToggle={() => setRail(!rail)} />}
 
-        <main className={view.name === "thesis" ? "" : "wide"}>
-          {view.name === "queue" && <QueuePage refreshToken={refreshToken} onChanged={bump} job={job} />}
-          {view.name === "new" && <ComposePage onCreated={(id) => (window.location.hash = `#/thesis/${id}`)} />}
-          {view.name === "notifications" && <NotificationsPage refreshToken={refreshToken} onChanged={bump} />}
-          {view.name === "thesis" && (
-            <ThesisWorkspace id={view.id} refreshToken={refreshToken} onChanged={bump} job={job} />
-          )}
+        <main className="main">
+          <div className="main-inner">
+            {view.name === "queue" && (
+              <QueuePage refreshToken={refreshToken} onChanged={bump} job={job} stats={stats} />
+            )}
+            {view.name === "new" && <ComposePage onCreated={(id) => (window.location.hash = `#/thesis/${id}`)} />}
+            {view.name === "notifications" && <NotificationsPage refreshToken={refreshToken} onChanged={bump} />}
+            {view.name === "thesis" && (
+              <ThesisWorkspace id={view.id} refreshToken={refreshToken} onChanged={bump} job={job} />
+            )}
+            <footer className="foot">
+              <div className="foot-grid">
+                <div>
+                  <div className="foot-brand">
+                    Thesis Radar<span>does the thesis still hold?</span>
+                  </div>
+                </div>
+                <div className="foot-cols">
+                  <div>
+                    <span className="foot-h">Routes</span>
+                    <a href="#/queue">Queue</a>
+                    <a href="#/new">New thesis</a>
+                    <a href="#/notifications">Notifications</a>
+                  </div>
+                  <div>
+                    <span className="foot-h">Machine</span>
+                    <span>{engineName}</span>
+                    <span>jev {jev?.available ? (jev.model ?? "on") : "off"}</span>
+                  </div>
+                  <div>
+                    <span className="foot-h">Data</span>
+                    <span>{stats ? `${stats.store.theses} theses` : "—"}</span>
+                    <span>{stats ? `${stats.store.checks} checks` : "—"}</span>
+                    <span>{stats ? `${stats.credits.credits_spent} credits` : "—"}</span>
+                  </div>
+                </div>
+              </div>
+              <p className="foot-note">
+                Numbers are computed in code, judgment is by the agent. A monitor of investment reasoning,
+                not investment advice.
+              </p>
+            </footer>
+          </div>
         </main>
-      </div>
 
-      <div style={{ borderTop: "1px solid var(--line)" }}>
-        <LiveJob job={job} onFinished={bump} />
+        {dock && <LiveJob job={job} onFinished={bump} />}
       </div>
     </div>
   );
 }
 
-function Rail({ selectedId, refreshToken, onNavigate }: { selectedId: string; refreshToken: number; onNavigate: () => void }) {
+function Rail({
+  selectedId,
+  refreshToken,
+  collapsed,
+  onToggle,
+}: {
+  selectedId: string;
+  refreshToken: number;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
   const [rows, setRows] = useState<QueueRow[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -153,28 +244,65 @@ function Rail({ selectedId, refreshToken, onNavigate }: { selectedId: string; re
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
   }, [refreshToken]);
 
-  if (error) return <div className="rail-item error">{error}</div>;
-  if (!rows.length) return <div className="rail-item dim">no theses yet</div>;
+  if (collapsed) {
+    return (
+      <aside className="rail rail-collapsed" aria-label="thesis list, collapsed">
+        <div className="rail-head rail-head-strip">
+          <button className="btn btn-ghost btn-icon rail-edge" onClick={onToggle} aria-expanded={false} title="Expand">
+            ›
+          </button>
+        </div>
+        {rows.length ? (
+          rows.map((row) => (
+            <a
+              key={row.id}
+              href={`#/thesis/${row.id}`}
+              className={`rail-strip-item${row.id === selectedId ? " selected" : ""}`}
+              title={row.company_name ? `${row.symbol} — ${row.company_name}` : row.symbol}
+            >
+              <i className={`dot dot-${row.status}`} />
+              <span className="rail-strip-sym">{row.symbol}</span>
+            </a>
+          ))
+        ) : (
+          <div className="rail-empty">—</div>
+        )}
+      </aside>
+    );
+  }
 
   return (
-    <>
+    <aside className="rail" aria-label="thesis list">
+      <div className="rail-head">
+        <button className="btn btn-ghost btn-icon rail-edge" onClick={onToggle} aria-expanded title="Collapse">
+          ‹
+        </button>
+        <span className="eyebrow">Theses</span>
+      </div>
+      {error && <div className="rail-empty">{error}</div>}
+      {!error && !rows.length && <div className="rail-empty">no theses yet</div>}
       {rows.map((row) => (
         <a
           key={row.id}
           href={`#/thesis/${row.id}`}
           className={`rail-item${row.id === selectedId ? " selected" : ""}`}
-          onClick={onNavigate}
         >
-          <div className="row1">
-            <span className={`chip ${row.status}`}>{row.status === "needs_review" ? "REVIEW" : row.status.toUpperCase()}</span>
-            <span className="sym">{row.symbol}</span>
-            <span className="grow" />
-            <span className="dim mono">{row.confidence === null ? "" : row.confidence.toFixed(2)}</span>
+          <div className="pillrow" style={{ gap: 10 }}>
+            <span className="chip">
+              <i className={`dot dot-${row.status}`} />
+              {STATUS_LABEL[row.status]}
+            </span>
+            <span className="rail-sym">{row.symbol}</span>
+            <span className="spacer" />
+            <span className="mono muted">{row.confidence === null ? "" : row.confidence.toFixed(2)}</span>
           </div>
-          {row.changes.length > 0 && <div className="change">↳ {row.changes[0].text.slice(0, 120)}</div>}
-          {row.changes.length === 0 && <div className="change dim">{row.claims} claim(s) · never checked</div>}
+          <div className="rail-note">
+            {row.changes.length
+              ? `↳ ${row.changes[0].text.slice(0, 120)}`
+              : `${row.claims} claim(s) · never checked`}
+          </div>
         </a>
       ))}
-    </>
+    </aside>
   );
 }

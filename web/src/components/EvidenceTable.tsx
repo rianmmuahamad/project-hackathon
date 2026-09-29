@@ -58,8 +58,7 @@ function reproduction(row: EvidenceRow, sectorsBase: string): string {
   const params = parseParams(row.params);
   if (row.endpoint?.startsWith("/v2/") && params) {
     const qs = queryString(params);
-    const suffix = qs ? `?${qs}` : "";
-    return `curl -s -H "Authorization: $SECTORS_API_KEY" "${sectorsBase}${row.endpoint}${suffix}"`;
+    return `curl -s -H "Authorization: $SECTORS_API_KEY" "${sectorsBase}${row.endpoint}${qs ? `?${qs}` : ""}"`;
   }
   return `${row.endpoint ?? "?"} ${row.params ?? "{}"}`;
 }
@@ -70,7 +69,7 @@ export function EvidenceTable({ rows, sectorsBase }: { rows: EvidenceRow[]; sect
   const [open, setOpen] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
-  if (!rows.length) return <p className="dim">No evidence rows were stored.</p>;
+  if (!rows.length) return <p className="body-sm muted">No evidence rows were stored.</p>;
 
   const counts: Record<Source, number> = { api: 0, tool: 0, jev: 0, guardrail: 0 };
   for (const row of rows) counts[sourceOf(row)] += 1;
@@ -98,14 +97,14 @@ export function EvidenceTable({ rows, sectorsBase }: { rows: EvidenceRow[]; sect
     <>
       <div className="toolbar">
         <button className={`fchip${source === "all" ? " on" : ""}`} onClick={() => setSource("all")}>
-          Semua<b>{rows.length}</b>
+          All<b>{rows.length}</b>
         </button>
         {SOURCE_ORDER.filter((name) => counts[name] > 0).map((name) => (
           <button
             key={name}
             className={`fchip${source === name ? " on" : ""}`}
             onClick={() => setSource(name)}
-            title={`hanya baris dari ${SOURCE_LABEL[name]}`}
+            title={`only rows from ${SOURCE_LABEL[name]}`}
           >
             {SOURCE_LABEL[name]}
             <b>{counts[name]}</b>
@@ -113,15 +112,17 @@ export function EvidenceTable({ rows, sectorsBase }: { rows: EvidenceRow[]; sect
         ))}
         <input
           type="search"
+          className="input"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="cari metrik, nilai, atau endpoint"
-          aria-label="cari baris bukti"
+          placeholder="Search metric, value, or endpoint"
+          aria-label="Search evidence rows"
+          style={{ width: "auto", minWidth: 180, maxWidth: 320, flex: 1, padding: "8px 12px", fontSize: 13 }}
         />
       </div>
 
       {visible.length === 0 ? (
-        <p className="empty">Tidak ada baris yang cocok.</p>
+        <p className="empty">No matching rows.</p>
       ) : (
         visible.map((row, index) => {
           const kind = sourceOf(row);
@@ -145,40 +146,43 @@ export function EvidenceTable({ rows, sectorsBase }: { rows: EvidenceRow[]; sect
               >
                 {/* A synthetic guardrail row stores ordinal -1, so the display
                     index is positional and never the stored ordinal. */}
-                <span className="num muted">{index + 1}</span>
-                <span className={`srcbadge ${kind}`}>{SOURCE_LABEL[kind]}</span>
-                <span>
-                  <div className={long ? "mono" : "muted"}>{row.metric ?? "—"}</div>
-                  <div className="evalue">{row.value ?? "—"}</div>
-                </span>
+                <span className="idx num">{index + 1}</span>
+                <span className={`srcbadge srcbadge-${kind}`}>{SOURCE_LABEL[kind]}</span>
+                <span className={`metric${long ? " long" : ""}`}>{row.metric ?? "—"}</span>
+                <span className="evalue">{row.value ?? "—"}</span>
               </div>
 
               {isOpen && (
                 <div className="edetail">
                   <div className="mono dim">
-                    {row.as_of ?? "tanpa tanggal"}
+                    {row.as_of ?? "no date"}
                     {row.symbol ? ` · ${row.symbol}` : ""} · ordinal {row.ordinal}
                   </div>
-                  {row.note && <div style={{ marginTop: 4 }}>{row.note}</div>}
+                  {row.note && (
+                    <p className="body-sm" style={{ marginTop: 6 }}>
+                      {row.note}
+                    </p>
+                  )}
 
-                  <div className="sub" style={{ marginTop: 8 }}>
-                    Parameter
+                  <div className="caption muted" style={{ marginTop: 12 }}>
+                    Parameters
                   </div>
-                  <pre className="code">{params ? JSON.stringify(params, null, 2) : "tidak ada parameter"}</pre>
+                  <pre className="code">{params ? JSON.stringify(params, null, 2) : "no parameters"}</pre>
 
-                  <div className="sub" style={{ marginTop: 8 }}>
-                    Cara menyebut ulang panggilan ini
+                  <div className="caption muted" style={{ marginTop: 12 }}>
+                    How to replay this call
                   </div>
                   <pre className="code">{reproduction(row, sectorsBase ?? "")}</pre>
                   <button
-                    style={{ marginTop: 6 }}
+                    className="btn btn-secondary"
+                    style={{ marginTop: 10, padding: "8px 14px", minHeight: 34, fontSize: 13 }}
                     onClick={(event) => {
                       event.stopPropagation();
                       void copy(row);
                     }}
                     disabled={!sectorsBase}
                   >
-                    {copied === row.id ? "tersalin" : "salin"}
+                    {copied === row.id ? "Copied" : "Copy"}
                   </button>
                 </div>
               )}

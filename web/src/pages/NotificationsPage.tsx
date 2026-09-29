@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { api } from "../api";
-import { relative } from "../format";
+import { relative, severityTone } from "../format";
 import type { Notification } from "../types";
 
 /**
@@ -39,61 +39,64 @@ export function NotificationsPage({
     }
   }
 
+  const unread = rows.filter((row) => !row.read).length;
+
   return (
     <>
-      <h1>Notifikasi</h1>
-      <p className="lead">
-        Hanya perubahan status yang muncul di sini. Pemeriksaan yang berakhir &ldquo;tidak ada yang
-        berubah&rdquo; sengaja tidak memberi kabar — itu produknya bekerja, bukan kegagalan.
-      </p>
+      <section className="qhead">
+        <div className="qhead-top">
+          <h1 className="headline">Notifications</h1>
+          <span className="qhead-count micro muted">
+            {unread ? `${unread} unread` : "All read"} · only status changes appear here
+          </span>
+          <span className="spacer" />
+          <button className="btn btn-secondary" onClick={() => void markRead()} disabled={unread === 0}>
+            Mark all read
+          </button>
+        </div>
+        {error && <div className="banner banner-bad">{error}</div>}
+      </section>
 
-      {error && <div className="banner bad">{error}</div>}
-
-      <div className="row" style={{ marginBottom: 12 }}>
-        <button onClick={() => void markRead()}>tandai semua dibaca</button>
-        <span className="sub">{rows.filter((row) => !row.read).length} belum dibaca</span>
-      </div>
-
-      {rows.length === 0 ? (
-        <div className="empty">Belum ada perubahan status.</div>
-      ) : (
-        <table>
-          <thead>
-            <tr>
-              <th style={{ width: 92 }}>Saham</th>
-              <th style={{ width: 90 }}>Tingkat</th>
-              <th>Perubahan</th>
-              <th style={{ width: 110 }}>Kapan</th>
-            </tr>
-          </thead>
-          <tbody>
+      <section className="section" style={{ marginTop: "var(--s-xl)" }}>
+        {rows.length === 0 ? (
+          <div className="card">
+            <p className="empty">
+              No status changes yet. Checks ending in &ldquo;nothing changed&rdquo; stay quiet on purpose —
+              that is the product working, not a failure.
+            </p>
+          </div>
+        ) : (
+          <div className="list">
             {rows.map((row) => (
-              <tr
+              <a
+                className="rowcard rowcard-tight"
                 key={row.id}
-                style={{ cursor: "pointer", opacity: row.read ? 0.6 : 1 }}
-                onClick={() => (window.location.hash = `#/thesis/${row.thesis_id}`)}
+                href={`#/thesis/${row.thesis_id}`}
+                style={row.read ? { background: "var(--canvas)", borderColor: "var(--hair-soft)" } : undefined}
               >
-                <td className="mono">{row.symbol}</td>
-                <td>
-                  <span className={`chip ${severityTone(row.severity)}`}>{row.severity}</span>
-                </td>
-                <td>
-                  <strong>{row.title}</strong>
-                  <div className="dim">{row.body}</div>
-                </td>
-                <td className="mono dim">{relative(row.created_at)}</td>
-              </tr>
+                <div className="rowcard-top">
+                  <span className="chip">
+                    <i className={`dot dot-${severityTone(row.severity)}`} />
+                    {(row.severity || "").toUpperCase()}
+                  </span>
+                  <span className="rowcard-sym">{row.symbol}</span>
+                  <span className="spacer" />
+                  <span className="rowcard-conf" title={row.created_at}>
+                    {relative(row.created_at)}
+                  </span>
+                </div>
+                <p
+                  className="rowcard-stmt"
+                  style={{ marginTop: 8, ...(row.read ? { color: "var(--ink-muted)" } : {}) }}
+                >
+                  {row.title}
+                </p>
+                <div className="rowcard-delta">{row.body}</div>
+              </a>
             ))}
-          </tbody>
-        </table>
-      )}
+          </div>
+        )}
+      </section>
     </>
   );
-}
-
-function severityTone(severity: string): string {
-  if (severity === "alert") return "broken";
-  if (severity === "warning") return "weakened";
-  if (severity === "ok") return "intact";
-  return "unknown";
 }

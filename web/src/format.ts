@@ -1,22 +1,36 @@
-/** Presentation helpers. Formatting rules live here so no two screens disagree. */
+/**
+ * Presentation vocabulary, in one place so no two screens disagree.
+ *
+ * The labels match the design reference exactly: a claim's `supported` state
+ * reads "INTACT" on screen, because that is the word the design uses for it.
+ */
 import type { ClaimState, ThesisStatus } from "./types";
 
 export const STATUS_LABEL: Record<ThesisStatus, string> = {
   intact: "INTACT",
   weakened: "WEAKENED",
   broken: "BROKEN",
-  needs_review: "NEEDS REVIEW",
+  needs_review: "REVIEW",
   unknown: "UNKNOWN",
 };
 
 export const STATUS_ORDER: ThesisStatus[] = ["broken", "needs_review", "weakened", "intact", "unknown"];
 
+/** Claim states reuse the thesis vocabulary on purpose; the dot colour differs, not the word. */
 export const STATE_LABEL: Record<ClaimState, string> = {
-  supported: "SUPPORTED",
-  weakening: "WEAKENING",
+  supported: "INTACT",
+  weakening: "WEAKENED",
   broken: "BROKEN",
   unknown: "UNKNOWN",
 };
+
+/** Severity of a notification, mapped onto the status tones. */
+export function severityTone(severity: string): ThesisStatus {
+  if (severity === "alert") return "broken";
+  if (severity === "warning") return "weakened";
+  if (severity === "ok") return "intact";
+  return "unknown";
+}
 
 export function relative(iso: string | null | undefined): string {
   if (!iso) return "never";
@@ -39,18 +53,4 @@ export function shortDate(iso: string | null | undefined): string {
 export function confidence(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
   return value.toFixed(2);
-}
-
-export function money(value: number | null | undefined): string {
-  if (value === null || value === undefined) return "—";
-  const abs = Math.abs(value);
-  const sign = value < 0 ? "-" : "";
-  if (abs >= 1e12) return `${sign}Rp${(abs / 1e12).toFixed(2)}T`;
-  if (abs >= 1e9) return `${sign}Rp${(abs / 1e9).toFixed(1)}M`;
-  if (abs >= 1e6) return `${sign}Rp${(abs / 1e6).toFixed(0)}jt`;
-  return `${sign}Rp${abs.toFixed(0)}`;
-}
-
-export function titleFor(symbol: string, name: string | null | undefined): string {
-  return name ? `${symbol} · ${name}` : symbol;
 }

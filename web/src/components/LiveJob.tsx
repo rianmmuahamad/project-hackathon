@@ -67,26 +67,32 @@ export function LiveJob({ job, onFinished }: { job: Job | null; onFinished?: () 
   const running = state === "running" || (job?.state === "running" && state !== "done");
 
   return (
-    <div className="live">
-      <div className="live-head">
-        {running && <span className="pulse" />}
-        <strong>{job ? job.kind : "no job"}</strong>
-        <span className="dim">
+    <div className="dock" id="live" aria-label="log agen">
+      <div className="dock-head">
+        {running ? <span className="pulse" /> : <i className="dot dot-unknown" />}
+        <strong className="body-sm">{job ? job.kind : "no job"}</strong>
+        <span className="dock-state">
           {job?.symbol ? `${job.symbol} · ` : ""}
           {running ? "working" : state === "idle" ? "idle" : state}
         </span>
-        <span className="grow" />
-        <span className="dim">{events.length} step(s)</span>
+        <span className="spacer" />
+        <span className="micro muted">{events.length} step(s)</span>
       </div>
-      {error && <div className="banner bad" style={{ margin: "10px 14px" }}>{error}</div>}
-      <ol ref={listRef}>
+      {error && (
+        <div className="banner banner-bad" style={{ margin: 12 }}>
+          {error}
+        </div>
+      )}
+      <ol className="dock-log" ref={listRef}>
         {events.length === 0 && (
-          <li className="dim">
-            {running ? "waiting for the first step…" : "start a check to watch the agent work"}
+          <li className="logline">
+            <span>
+              {running ? "waiting for the first step..." : "start a check to watch the agent work"}
+            </span>
           </li>
         )}
         {events.map((event, index) => (
-          <li key={index} className={event.kind}>
+          <li key={index} className={`logline ${event.kind}`}>
             <span className="at">{event.at}</span>
             <span>{describe(event)}</span>
           </li>
@@ -98,8 +104,9 @@ export function LiveJob({ job, onFinished }: { job: Job | null; onFinished?: () 
 
 function describe(event: JobEvent): string {
   if (event.kind === "tool") {
-    const args = event.args && typeof event.args === "object" ? JSON.stringify(event.args) : "";
-    return `tool → ${String(event.tool)}(${args.slice(0, 110)})`;
+    const args = event.args && typeof event.args === "object" ? JSON.stringify(event.args) : "{}";
+    const shown = args.slice(0, 90);
+    return `${String(event.tool)}  ${shown}${args.length > 90 ? "..." : ""}`;
   }
   if (event.kind === "tool_result") {
     return `      ${String(event.tool)} cost ${String(event.credits)} credit(s)`;

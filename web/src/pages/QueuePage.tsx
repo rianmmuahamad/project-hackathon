@@ -1,24 +1,26 @@
 import { useEffect, useState } from "react";
 
 import { api } from "../api";
-import type { Job, QueueRow } from "../types";
-import { relative, shortDate } from "../format";
+import type { Job, QueueRow, Stats } from "../types";
+import { relative, shortDate, STATUS_ORDER, STATUS_LABEL } from "../format";
 
 /**
  * The worklist. Worst first.
  *
  * A user does not start from "run a scan": they start from "which of the things
- * I own no longer make sense?" The queue answers that, and the check-all button
- * is the recurring routine — not a search box.
+ * I own no longer make sense?" The queue answers that, and check-all is the
+ * recurring routine — not a search box.
  */
 export function QueuePage({
   refreshToken,
   onChanged,
   job,
+  stats,
 }: {
   refreshToken: number;
   onChanged: () => void;
   job: Job | null;
+  stats: Stats | null;
 }) {
   const [rows, setRows] = useState<QueueRow[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -51,107 +53,149 @@ export function QueuePage({
     acc[row.status] = (acc[row.status] ?? 0) + 1;
     return acc;
   }, {});
+  const watched = rows.filter((row) => row.watch).length;
+  const summary = STATUS_ORDER.filter((status) => counts[status])
+    .map((status) => `${counts[status]} ${STATUS_LABEL[status].toLowerCase()}`)
+    .join(" · ");
+  const store = stats?.store;
+  const credits = stats?.credits;
+  const engineName =
+    Object.entries(stats?.engine ?? {}).find(([, info]) => info.available)?.[0] ?? "none";
+  const jev = stats?.jev;
 
   return (
     <>
-      <h1>Antrian tesis</h1>
-      <p className="lead">
-        Setiap baris adalah alasan tertulis seseorang memiliki sebuah saham. Agen memeriksa apakah alasannya
-        masih berdiri, dan hanya memberi tahu kalau jawabannya berubah.
-      </p>
-
-      {error && <div className="banner bad">{error}</div>}
-
-      <div className="row wrap" style={{ marginBottom: 14 }}>
-        <button className="primary" onClick={() => void checkAll()} disabled={busy || running}>
-          {running ? "sedang berjalan…" : "periksa semua"}
-        </button>
-        <a href="#/new">
-          <button>+ tesis baru</button>
-        </a>
-        <span className="grow" />
-        <span className="sub">
-          {(["broken", "weakened", "needs_review", "intact"] as const)
-            .filter((status) => counts[status])
-            .map((status) => `${counts[status]} ${status}`)
-            .join(" · ") || "belum ada tesis"}
-        </span>
-      </div>
-
-      {rows.length === 0 ? (
-        <div className="empty">
-          Belum ada tesis. Tulis satu di <a href="#/new">Tesis baru</a> — misalnya
-          <em> &ldquo;kredit BBRI tumbuh minimal 10% YoY&rdquo;</em>.
+      <section className="qhead">
+        <div className="qhead-top">
+          <h1 className="headline">Thesis queue</h1>
+          <span className="qhead-count micro muted">
+            {rows.length} theses · {summary || "no theses yet"}
+          </span>
+          <span className="spacer" />
+          <div className="pillrow">
+            <a href="#/new">
+              <button className="btn btn-secondary" type="button">
+                + New thesis
+              </button>
+            </a>
+            <button className="btn btn-primary" onClick={() => void checkAll()} disabled={busy || running}>
+              {running ? "Running..." : "Check all"}
+            </button>
+          </div>
         </div>
-      ) : (
-        <table>
-          <thead>
-            <tr>
-              <th style={{ width: 90 }}>Status</th>
-              <th style={{ width: 60 }} className="num">
-                Conf
-              </th>
-              <th style={{ width: 78 }}>Saham</th>
-              <th>Perubahan terakhir</th>
-              <th style={{ width: 92 }} className="num">
-                Klaim
-              </th>
-              <th style={{ width: 120 }}>Diperiksa</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.id} style={{ cursor: "pointer" }} onClick={() => (window.location.hash = `#/thesis/${row.id}`)}>
-                <td>
-                  <span className={`chip ${row.status}`}>
-                    {row.status === "needs_review" ? "REVIEW" : row.status.toUpperCase()}
-                  </span>
-                </td>
-                <td className="num mono">{row.confidence === null ? "—" : row.confidence.toFixed(2)}</td>
-                <td className="mono">{row.symbol}</td>
-                <td>
-                  {row.changes.length > 0 ? (
-                    <>
-                      {row.changes[0].text}
-                      {row.changes[0].magnitude && <span className="muted"> · {row.changes[0].magnitude}</span>}
-                    </>
-                  ) : (
-                    <span className="dim">{row.last_check?.summary ?? row.statement}</span>
-                  )}
-                </td>
-                <td className="num mono">
-                  {row.last_check ? `${row.last_check.tool_calls} tool` : `${row.claims} claim`}
-                </td>
-                <td className="mono dim" title={row.last_checked_at ?? ""}>
-                  {relative(row.last_checked_at)}
-                  {row.watermark && <div className="dim">since {shortDate(row.watermark)}</div>}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+        {error && <div className="banner banner-bad">{error}</div>}
+        <div className="qstats">
+          <span className="qstat">
+            <b>
+              {watched}/{rows.length}
+            </b>{" "}
+            watched
+          </span>
+          <span className="qstat">
+            <b>{store ? store.checks : "—"}</b> checks
+          </span>
+          <span className="qstat">
+            <b>{credits ? credits.credits_spent : "—"}</b> credits
+            {credits ? ` (${credits.network_calls} network · ${credits.cached_calls} cached)` : ""}
+          </span>
+          <span className="qstat">
+            <b>{engineName}</b> engine
+          </span>
+          <span className="qstat">
+            <b>{jev?.available ? (jev.model ?? "on") : "off"}</b> jev
+          </span>
+        </div>
+      </section>
 
-      <h2>Bagaimana produk ini bekerja</h2>
-      <div className="grid2">
-        <div className="card tight">
-          <h3>Angka dihitung kode, penilaian dilakukan agen</h3>
-          <p className="sub" style={{ margin: 0 }}>
-            Nilai terbaru, perubahan YoY, dan uji ambang batas dihitung di Python dari data yang sudah
-            tersimpan. Tidak ada angka dalam putusan yang diketik model. Agen memakainya untuk menjawab
-            pertanyaan yang tidak bisa dihitung: apakah pergerakan ini milik perusahaan atau seluruh pasar,
-            apakah harga bergerak karena aksi korporasi, dan apakah alasan yang tertulis masih masuk akal.
-          </p>
+      <section className="section" style={{ marginTop: "var(--s-xl)" }}>
+        {rows.length === 0 ? (
+          <div className="card">
+            <p className="empty">
+              No theses yet. Write one in <a href="#/new">New thesis</a> — for example{" "}
+              <em>&ldquo;BBRI loans grow at least 10% YoY&rdquo;</em>.
+            </p>
+          </div>
+        ) : (
+          <div className="list">
+            {rows.map((row) => {
+              const change = row.changes.length ? row.changes[0] : null;
+              return (
+                <a className="rowcard" key={row.id} href={`#/thesis/${row.id}`}>
+                  <div className="rowcard-top">
+                    <span className="chip">
+                      <i className={`dot dot-${row.status}`} />
+                      {STATUS_LABEL[row.status]}
+                    </span>
+                    <span className="rowcard-sym">{row.symbol}</span>
+                    <span className="spacer" />
+                    <span className="rowcard-conf">
+                      confidence <b>{row.confidence === null ? "—" : row.confidence.toFixed(2)}</b>
+                    </span>
+                  </div>
+                  {row.company_name && <div className="rowcard-cname">{row.company_name}</div>}
+                  <p className="rowcard-stmt">{row.statement}</p>
+                  <div className="rowcard-delta">
+                    <span className="arw">↳</span>
+                    <span>
+                      {change ? (
+                        <>
+                          {change.text}
+                          {change.magnitude && <span className="muted"> · {change.magnitude}</span>}
+                        </>
+                      ) : (
+                        <span className="muted">{row.last_check?.summary ?? "Never checked."}</span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="rowcard-meta">
+                    <span className="meta-group">
+                      <span>{row.claims} claims</span>
+                      <span>{row.last_check ? `${row.last_check.tool_calls} tool calls` : "—"}</span>
+                      <span title={row.last_checked_at ?? ""}>{relative(row.last_checked_at)}</span>
+                    </span>
+                    <span className="spacer" />
+                    <span className="meta-group">
+                      {row.watermark && <span>watermark since {shortDate(row.watermark)}</span>}
+                      {row.watch && (
+                        <span className="tag">
+                          <i className="dot dot-intact" />
+                          watched
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                </a>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <section className="section">
+        <div className="secttl">
+          <span className="eyebrow">how it works</span>
+          <h2 className="d-md">How this product works</h2>
         </div>
-        <div className="card tight">
-          <h3>Watermark</h3>
-          <p className="sub" style={{ margin: 0 }}>
-            Setiap pemeriksaan menyimpan tanggal. Pemeriksaan berikutnya hanya membaca yang baru sejak tanggal
-            itu — makanya baris &ldquo;perubahan terakhir&rdquo; di atas ada isinya, dan makanya memeriksa ulang
-            hampir tidak memakai kredit.
-          </p>
+        <div className="grid-2">
+          <div className="card">
+            <h3 className="headline">Numbers are computed in code, judgment by the agent</h3>
+            <p className="body-sm muted" style={{ marginTop: 10 }}>
+              Latest values, YoY changes, and threshold tests are computed in Python from stored data. No
+              number in a verdict is typed by the model. The agent uses them to answer what cannot be
+              computed: whether a move belongs to the company or the whole market, whether a price moved on
+              corporate action, and whether the written thesis still makes sense.
+            </p>
+          </div>
+          <div className="card">
+            <h3 className="headline">Watermark</h3>
+            <p className="body-sm muted" style={{ marginTop: 10 }}>
+              Every check stores a date. The next check only reads what is new since that date — which is why
+              the &ldquo;latest change&rdquo; row above has content, and why re-checking costs almost no
+              credits.
+            </p>
+          </div>
         </div>
-      </div>
+      </section>
     </>
   );
 }

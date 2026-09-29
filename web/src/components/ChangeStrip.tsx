@@ -9,16 +9,16 @@ import { shortDate } from "../format";
  */
 export function ChangeStrip({ changes }: { changes: Change[] }) {
   if (!changes.length) {
-    return <p className="dim">Nothing has changed since the last check. That is the answer.</p>;
+    return <p className="body-sm muted">Nothing has changed since the last check. That is the answer.</p>;
   }
   return (
-    <div className="strip">
+    <div className="chg">
       {changes.map((change) => (
-        <div className="item" key={change.id}>
-          <span className="tag">{change.kind ?? "data"}</span>
-          <span>
-            {change.text}
-            {change.magnitude && <span className="muted"> · {change.magnitude}</span>}
+        <div className="chg-row" key={change.id}>
+          <span className="tag chg-tag">{change.kind ?? "data"}</span>
+          <span className="chg-body">
+            <span className="chg-text">{change.text}</span>
+            {change.magnitude && <span className="chg-mag">{change.magnitude}</span>}
           </span>
         </div>
       ))}
@@ -27,39 +27,43 @@ export function ChangeStrip({ changes }: { changes: Change[] }) {
 }
 
 export function ClaimList({ claims }: { claims: Claim[] }) {
-  if (!claims.length) return <p className="dim">No checkable claims were extracted.</p>;
+  if (!claims.length) return <p className="body-sm muted">No checkable claims were extracted.</p>;
   return (
-    <table>
-      <thead>
-        <tr>
-          <th style={{ width: 30 }}>#</th>
-          <th>Claim</th>
-          <th style={{ width: 150 }}>Metric</th>
-          <th style={{ width: 90 }}>Direction</th>
-          <th style={{ width: 110 }}>Baseline</th>
-        </tr>
-      </thead>
-      <tbody>
-        {claims.map((claim) => (
-          <tr key={claim.id}>
-            <td className="num muted">{claim.ordinal + 1}</td>
-            <td>{claim.text}</td>
-            <td className="mono">{claim.metric ?? <span className="dim">unresolved</span>}</td>
-            <td className="mono">
-              {claim.direction ?? "—"}
-              {claim.threshold !== null && (
-                <span className="dim">
-                  {" "}
-                  {claim.comparator ?? ">="} {claim.threshold}
-                </span>
-              )}
-            </td>
-            <td className="mono dim">
-              {claim.baseline_value === null ? "—" : shortDate(claim.baseline_date)}
-            </td>
+    <div style={{ overflowX: "auto" }}>
+      <table className="tbl">
+        <thead>
+          <tr>
+            <th style={{ width: 34 }} className="num">
+              #
+            </th>
+            <th>Claim</th>
+            <th style={{ width: 150, minWidth: 140 }}>Metric</th>
+            <th style={{ width: 120 }}>Direction</th>
+            <th style={{ width: 110, minWidth: 110 }}>Baseline</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {claims.map((claim) => (
+            <tr key={claim.id}>
+              <td className="num muted">{claim.ordinal + 1}</td>
+              <td>{claim.text}</td>
+              <td className="mono">{claim.metric ?? <span className="dim">unresolved</span>}</td>
+              <td className="mono">
+                {claim.direction ?? "—"}
+                {claim.threshold !== null && (
+                  <span className="dim">
+                    {" "}
+                    {claim.comparator ?? ">="} {claim.threshold}
+                  </span>
+                )}
+              </td>
+              <td className="mono dim">
+                {claim.baseline_value === null ? "—" : shortDate(claim.baseline_date)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

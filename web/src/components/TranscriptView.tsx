@@ -18,11 +18,11 @@ export function TranscriptView({ segments, markdown }: { segments: TranscriptSeg
   const [raw, setRaw] = useState(false);
 
   if (!segments.length) {
-    if (!markdown) return <p className="dim">Transkrip tidak tersimpan untuk pemeriksaan ini.</p>;
+    if (!markdown) return <p className="body-sm muted">No transcript was stored for this check.</p>;
     return (
       <>
-        <div className="banner warn" style={{ marginBottom: 10 }}>
-          Transkrip tidak bisa dipecah menjadi bagian; ditampilkan apa adanya.
+        <div className="banner banner-warn" style={{ marginBottom: 10 }}>
+          The transcript could not be split into sections; shown as-is.
         </div>
         <div className="transcript">{markdown}</div>
       </>
@@ -32,15 +32,19 @@ export function TranscriptView({ segments, markdown }: { segments: TranscriptSeg
   return (
     <>
       <div className="toolbar">
-        <span className="count">{segments.length} bagian</span>
-        <span className="grow" />
-        <button onClick={() => setRaw(!raw)}>
-          {raw ? "Lihat terstruktur" : "Lihat mentah"}
+        <span className="micro muted">{segments.length} sections</span>
+        <span className="spacer" />
+        <button
+          className="btn btn-secondary"
+          style={{ padding: "8px 14px", minHeight: 34, fontSize: 13 }}
+          onClick={() => setRaw(!raw)}
+        >
+          {raw ? "View structured" : "View raw"}
         </button>
       </div>
 
       {raw ? (
-        <div className="transcript">{markdown ?? "(transkrip tidak tersimpan)"}</div>
+        <div className="transcript">{markdown ?? "(no transcript stored)"}</div>
       ) : (
         segments.map((segment) => {
           const isOpen = open === segment.ordinal;
@@ -51,13 +55,13 @@ export function TranscriptView({ segments, markdown }: { segments: TranscriptSeg
                 aria-expanded={isOpen}
                 onClick={() => setOpen(isOpen ? null : segment.ordinal)}
               >
-                <span className={`kbadge ${segment.kind}`}>{segment.label}</span>
+                <span className={`kbadge kbadge-${segment.kind}`}>{segment.label}</span>
                 <span className="mono dim">{segment.title}</span>
-                <span className="grow" />
+                <span className="spacer" />
                 {segment.evidence_ordinals.length > 0 && (
-                  <span className="count">{segment.evidence_ordinals.length} bukti</span>
+                  <span className="micro muted">{segment.evidence_ordinals.length} evidence</span>
                 )}
-                <span className="dim">{isOpen ? "▾" : "▸"}</span>
+                <span className="muted seg-chev">{isOpen ? "▾" : "▸"}</span>
               </button>
 
               {!isOpen && segment.summary && <div className="seg-sum">{segment.summary}</div>}
@@ -110,7 +114,7 @@ function renderBody(body: string) {
         {prettyJson(part.text)}
       </pre>
     ) : (
-      <p key={index} style={{ whiteSpace: "pre-wrap", margin: "8px 0 0" }}>
+      <p className="prose" key={index}>
         {part.text}
       </p>
     ),

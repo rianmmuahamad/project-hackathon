@@ -1,0 +1,1774 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<meta name="theme-color" content="#090909" />
+<title>Thesis Radar — does the thesis still hold?</title>
+
+<!-- Tailwind (Play CDN build, vendored so the folder works offline).
+     Used only for preflight + markup utilities; the design system itself
+     lives in the plain <style> below, so it does not depend on the JIT. -->
+<script src="tailwind.js"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        canvas:  'var(--canvas)',
+        sf1:     'var(--sf-1)',
+        sf2:     'var(--sf-2)',
+        hair:    'var(--hair)',
+        hairsoft:'var(--hair-soft)',
+        ink:     'var(--ink)',
+        muted:   'var(--ink-muted)',
+        accent:  'var(--accent-blue)',
+      },
+      fontFamily: {
+        sans: ['Inter','-apple-system','BlinkMacSystemFont','"Segoe UI"','Roboto','Helvetica','Arial','sans-serif'],
+        mono: ['ui-monospace','SFMono-Regular','"SF Mono"','Menlo','Consolas','monospace'],
+      },
+    },
+  },
+};
+</script>
+
+<style>
+/* =====================================================================
+   Thesis Radar — design system.
+
+   Dark Framer-like canvas: near-black surfaces, white display type,
+   one blue accent (#0099ff) for links/focus/selection, and magenta-violet
+   gradient "spotlight" cards as the only atmosphere device (max one per page).
+
+   Font note: GT Walsheim Medium is unavailable offline and not freely
+   licensed, so display uses Inter (600/700) with manually tightened
+   tracking — the sanctioned substitute from the design brief.
+   Body uses Inter Variable with OpenType variants (cv01/cv05/cv09/cv11,
+   ss03/ss07, dlig, tnum) per spec.
+   ===================================================================== */
+
+@font-face { font-family:"Inter"; font-weight:400; font-display:swap; src:url(assets/fonts/Inter-Regular-new.woff2) format("woff2"); }
+@font-face { font-family:"Inter"; font-weight:500; font-display:swap; src:url(assets/fonts/Inter-Medium-new.woff2) format("woff2"); }
+@font-face { font-family:"Inter"; font-weight:600; font-display:swap; src:url(assets/fonts/Inter-SemiBold-new.woff2) format("woff2"); }
+@font-face { font-family:"Inter"; font-weight:700; font-display:swap; src:url(assets/fonts/Inter-Bold-new.woff2) format("woff2"); }
+@font-face { font-family:"Inter"; font-weight:900; font-display:swap; src:url(assets/fonts/Inter-Black-new.woff2) format("woff2"); }
+
+:root {
+  /* colors */
+  --inverse:#ffffff; --on-inverse:#000000;
+  --primary:var(--inverse); --on-primary:var(--on-inverse);
+  --accent-blue:#0099ff;
+  --ink:#ffffff; --ink-muted:#AFAFAF;
+  --canvas:#090909; --sf-1:#141414; --sf-2:#1c1c1c;
+  --hair:#262626; --hair-soft:#1a1a1a;
+  --g-magenta:#d44df0; --g-violet:#6a4cf5; --g-orange:#ff7a3d; --g-coral:#ff5577;
+  /* --grad-spot removed on purpose: the spotlight card left with the marketing hero.
+     Gradients stay alive through the --g-* tokens used by status dots. */
+  /* status semantics — all drawn from the gradient family plus one documented
+     semantic green, keeping the palette "mono + one blue + gradient" */
+  --ok:#22c55e; --warn:var(--g-orange); --bad:var(--g-coral); --rev:var(--g-magenta); --unk:#AFAFAF;
+
+  /* radius */
+  --r-xs:4px; --r-sm:6px; --r-md:10px; --r-lg:15px; --r-xl:20px; --r-xxl:30px; --r-pill:100px;
+
+  /* spacing (5pt base) */
+  --s-xxs:4px; --s-xs:8px; --s-sm:12px; --s-md:15px; --s-lg:20px; --s-xl:30px; --s-xxl:40px; --s-section:56px;
+
+  /* elevation */
+
+  --shadow-lift: inset 0 .5px 0 rgba(255,255,255,.10), 0 10px 30px rgba(0,0,0,.45);
+  --ring-select: 0 0 0 1px rgba(0,153,255,.45);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  letter-spacing: 0;
+  font-feature-settings: "cv01","cv05","cv09","cv11","ss03","ss07","dlig";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3 { margin: 0; font-weight: inherit; font-size: inherit; }
+p { margin: 0; }
+a { color: var(--accent-blue); text-decoration: none; }
+a:hover { color: #4db4ff; }
+button { font: inherit; color: inherit; }
+ul, ol { margin: 0; padding: 0; list-style: none; }
+code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+
+:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; border-radius: var(--r-sm); }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 9999px; border: 2px solid var(--canvas); }
+::-webkit-scrollbar-thumb:hover { background: #3a3a3a; }
+
+/* ---------------- typography ---------------- */
+/* The display scale stops at d-lg and is only used for in-page section titles.
+   No larger grade: the 85px title belongs to the landing page, and this
+   surface is a work tool. Page title = .headline (22px). */
+.d-md  { font-size: clamp(21px, 2.4vw, 32px); line-height: 1.13; letter-spacing: -.02em; font-weight: 600; }
+.d-lg  { font-size: clamp(28px, 4.2vw, 62px); line-height: 1;    letter-spacing: -.05em; font-weight: 600; font-feature-settings: "ss02","cv11"; }
+.headline { font-size: 22px; line-height: 1.2; letter-spacing: -.02em; font-weight: 700; }
+.subhead { font-size: clamp(17px, 1.5vw, 24px); line-height: 1.4; letter-spacing: 0; font-weight: 400; color: var(--ink-muted); }
+.body-lg { font-size: 18px; line-height: 1.6; }
+.body-sm { font-size: 14px; font-weight: 500; line-height: 1.6; }
+.caption { font-size: 13px; font-weight: 500; line-height: 1.5; }
+.micro   { font-size: 12px; line-height: 1.5; }
+.mono    { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.num     { font-variant-numeric: tabular-nums; }
+.muted   { color: var(--ink-muted); }
+.dim     { color: var(--ink-muted); }
+.eyebrow { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-muted); }
+.spacer  { flex: 1; }
+.stack   { display: flex; flex-direction: column; }
+.pillrow { display: flex; align-items: center; gap: var(--s-xs); flex-wrap: wrap; }
+
+/* ---------------- kerangka ---------------- */
+.app { display: grid; grid-template-rows: 56px minmax(0, 1fr); height: 100vh; }
+
+.topnav {
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: var(--s-sm);
+  height: 56px; padding: 0 var(--s-lg);
+  background: var(--canvas); border-bottom: 1px solid var(--hair);
+  position: sticky; top: 0; z-index: 30;
+}
+.topnav-left { display: flex; align-items: center; gap: var(--s-xs); justify-self: start; min-width: 0; }
+.topnav-right { display: flex; align-items: center; gap: var(--s-xs); justify-self: end; min-width: 0; }
+.topnav [hidden] { display: none !important; }
+.rail-toggle[hidden], .dock-peek[hidden], .dock-toggle[hidden] { display: none !important; }
+.dock-peek {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: transparent; color: var(--ink-muted); border: 1px solid var(--hair);
+  padding: 6px 12px; min-height: 30px; border-radius: var(--r-pill);
+  font-size: 12px; line-height: 1.2; white-space: nowrap; cursor: pointer;
+}
+.dock-peek:hover { color: var(--ink); border-color: #3a3a3a; }
+.brand { display: flex; align-items: baseline; gap: var(--s-sm); color: var(--ink); }
+.brand:hover { color: var(--ink); }
+.brand-mark { font-size: 15px; font-weight: 600; letter-spacing: -.03em; }
+.brand-sub { font-size: 12px; letter-spacing: -.01em; color: var(--ink-muted); }
+.navpills { display: flex; align-items: center; gap: 2px; background: var(--sf-1); border-radius: var(--r-pill); padding: 3px; justify-self: center; }
+.navpill {
+  display: inline-flex; align-items: center; gap: var(--s-xxs);
+  padding: 7px 14px; border-radius: var(--r-pill);
+  font-size: 14px; font-weight: 500; letter-spacing: -.01em; color: var(--ink-muted);
+  white-space: nowrap; min-height: 34px;
+}
+.navpill:hover { color: var(--ink); }
+.navpill.on { background: var(--sf-2); color: var(--ink); }
+.navcount { font-size: 11px; font-weight: 600; color: var(--accent-blue); }
+.work { display: grid; grid-template-columns: minmax(0, 1fr) 380px; min-height: 0; }
+.work.with-rail { grid-template-columns: 300px minmax(0, 1fr) 380px; }
+.work.with-rail.rail-hidden { grid-template-columns: 88px minmax(0, 1fr) 380px; }
+.work.dock-hidden { grid-template-columns: minmax(0, 1fr); }
+.work.with-rail.dock-hidden { grid-template-columns: 300px minmax(0, 1fr); }
+.work.with-rail.rail-hidden.dock-hidden { grid-template-columns: 88px minmax(0, 1fr); }
+.main { overflow-y: auto; min-width: 0; min-height: 0; scroll-behavior: smooth; }
+.rail-collapsed { overflow-x: hidden; }
+.rail-strip-item {
+  display: flex; align-items: center; gap: 8px; padding: 12px 14px;
+  border-bottom: 1px solid var(--hair-soft); color: var(--ink);
+  font-size: 13px; font-weight: 600; letter-spacing: .01em; white-space: nowrap;
+}
+.rail-strip-item:hover { background: var(--sf-1); color: var(--ink); }
+.rail-strip-item.selected { background: var(--sf-2); box-shadow: var(--ring-select); }
+.rail-strip-sym { overflow: hidden; text-overflow: ellipsis; }
+.rail-edge { flex: none; width: 30px; height: 30px; min-height: 30px; font-size: 16px; line-height: 1; }
+.rail-head-strip { justify-content: center; padding: 10px 8px; }
+.main-inner { max-width: 880px; margin: 0 auto; padding: 0 24px 64px; }
+
+/* ---------------- tombol ---------------- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--s-xs);
+  font-size: 14px; font-weight: 500; line-height: 1; letter-spacing: -.01em;
+  padding: 11px 16px; min-height: 40px;
+  border: 1px solid transparent; border-radius: var(--r-pill);
+  cursor: pointer; white-space: nowrap;
+  transition: transform .12s ease, background-color .15s ease, color .15s ease, border-color .15s ease;
+}
+.btn-primary { background: var(--primary); color: var(--on-primary); }
+.btn-primary:hover:not(:disabled) { transform: scale(.975); }
+.btn-primary:active:not(:disabled) { transform: scale(.95); }
+.btn-secondary { background: var(--sf-1); color: var(--ink); }
+.btn-secondary:hover:not(:disabled) { background: var(--sf-2); }
+.btn-ghost { background: transparent; color: var(--ink-muted); border-color: var(--hair); }
+.btn-ghost:hover:not(:disabled) { color: var(--ink); border-color: #3a3a3a; }
+.btn-icon { width: 40px; height: 40px; min-height: 40px; padding: 0; border-radius: var(--r-pill); }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+@media (hover: none) { .btn { min-height: 44px; } .btn-icon { width: 44px; height: 44px; } }
+
+/* Hamburger + dock icon live only at narrow breakpoints. Must sit AFTER the
+   `.btn` block above: `.btn { display:inline-flex }` has equal specificity,
+   so the later rule wins — placed above, the icons would leak onto desktop. */
+.hamburger, .dock-toggle { display: none; }
+
+/* ---------------- chip status & badge ---------------- */
+.chip {
+  display: inline-flex; align-items: center; gap: var(--s-xxs);
+  padding: 4px 10px; border-radius: var(--r-pill);
+  background: var(--sf-2); color: var(--ink);
+  font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; line-height: 1.2;
+  white-space: nowrap;
+}
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--unk); flex: none; }
+.dot-intact, .dot-supported   { background: var(--ok); }
+.dot-weakened, .dot-weakening { background: var(--warn); }
+.dot-broken                   { background: var(--bad); }
+.dot-needs_review             { background: var(--rev); }
+.dot-unknown                  { background: var(--unk); }
+.badge {
+  display: inline-flex; align-items: center; gap: var(--s-xxs);
+  padding: 3px 9px; border-radius: var(--r-sm);
+  background: var(--sf-2); color: var(--ink-muted);
+  font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+}
+.badge-alert { color: var(--bad); }
+
+/* ---------------- kartu & permukaan ---------------- */
+.card { background: var(--sf-1); border: 1px solid var(--hair-soft); border-radius: var(--r-xl); padding: var(--s-lg); }
+.card-tight { padding: var(--s-md); }
+.card-featured { background: var(--sf-2); }
+
+/* ---------------- banner ---------------- */
+.banner { border: 1px solid var(--hair); background: var(--sf-1); border-radius: var(--r-lg); padding: 14px 16px; font-size: 14px; line-height: 1.45; }
+.banner + .banner { margin-top: var(--s-sm); }
+.banner-info { border-color: rgba(0,153,255,.35); }
+.banner-warn { border-color: rgba(255,122,61,.35); }
+.banner-bad  { border-color: rgba(255,85,119,.4); }
+.bullets { padding-left: 18px; list-style: disc; }
+.bullets li { margin-top: 4px; }
+
+/* ---------------- formulir ---------------- */
+.input {
+  width: 100%; background: var(--sf-1); color: var(--ink);
+  border: 1px solid var(--hair); border-radius: var(--r-md);
+  padding: 10px 14px; font: inherit; font-size: 15px;
+  transition: box-shadow .15s ease, border-color .15s ease;
+}
+.input::placeholder { color: #8C8C8C; }
+.input:focus { outline: none; border-color: rgba(0,153,255,.5); box-shadow: var(--ring-select); }
+textarea.input { min-height: 130px; resize: vertical; line-height: 1.4; }
+.field { display: flex; flex-direction: column; gap: var(--s-xxs); }
+.field > span { font-size: 13px; font-weight: 500; color: var(--ink-muted); }
+
+/* ---------------- tabel ---------------- */
+.tbl { width: 100%; border-collapse: collapse; }
+.tbl th {
+  font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-muted);
+  text-align: left; padding: 0 12px 12px; border-bottom: 1px solid var(--hair); white-space: nowrap;
+}
+.tbl td { padding: 14px 12px; border-bottom: 1px solid var(--hair-soft); vertical-align: top; font-size: 14px; line-height: 1.55; }
+.tbl tbody tr:hover td { background: rgba(255,255,255,.025); }
+.tbl tbody tr:last-child td { border-bottom: 0; }
+.tbl .num, .tbl th.num { text-align: right; }
+
+/* ---------------- rail ---------------- */
+.rail { border-right: 1px solid var(--hair); background: var(--canvas); overflow-y: auto; min-height: 0; display: flex; flex-direction: column; }
+.rail-head {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; gap: var(--s-xs);
+  padding: 14px 16px; background: var(--canvas); border-bottom: 1px solid var(--hair-soft);
+}
+.rail-item { display: block; padding: 14px 16px; border-bottom: 1px solid var(--hair-soft); color: var(--ink); }
+.rail-item:hover { background: var(--sf-1); color: var(--ink); }
+.rail-item.selected { background: var(--sf-2); box-shadow: var(--ring-select); }
+.rail-sym { font-size: 15px; font-weight: 600; letter-spacing: -.03em; }
+.rail-note { font-size: 12px; color: var(--ink-muted); margin-top: 8px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.rail-empty { padding: 16px; font-size: 13px; color: var(--ink-muted); }
+
+/* ---------------- baris antrian ---------------- */
+.list { display: flex; flex-direction: column; gap: var(--s-sm); }
+.rowcard {
+  display: block; padding: 18px 20px;
+  background: var(--sf-1); border: 1px solid var(--hair-soft); border-radius: var(--r-xl);
+  color: var(--ink); cursor: pointer;
+  transition: background-color .15s ease;
+}
+.rowcard { scroll-margin-top: var(--s-lg); }
+.rowcard:hover { background: var(--sf-2); color: var(--ink); }
+.rowcard-tight { padding: 14px 16px; }
+.rowcard-top { display: flex; align-items: center; gap: var(--s-sm); flex-wrap: wrap; }
+.rowcard-sym { font-size: 20px; font-weight: 600; letter-spacing: -.02em; line-height: 1; }
+.rowcard-cname { font-size: 13px; color: var(--ink-muted); margin-top: 4px; }
+.rowcard-conf { font-size: 13px; color: var(--ink-muted); }
+.rowcard-conf b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.rowcard-stmt { margin-top: 10px; font-size: 17px; line-height: 1.6; color: var(--ink); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.rowcard-delta { margin-top: var(--s-xs); font-size: 14px; line-height: 1.55; color: var(--ink-muted); display: flex; gap: 8px; }
+.rowcard-delta .arw { color: #8C8C8C; flex: none; }
+.rowcard-meta {
+  margin-top: var(--s-md); padding-top: var(--s-sm); border-top: 1px solid var(--hair-soft);
+  display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; font-size: 12px; color: var(--ink-muted);
+}
+.rowcard-meta .meta-group { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; }
+.tag { display: inline-flex; align-items: center; gap: var(--s-xxs); padding: 3px 9px; border-radius: var(--r-sm); border: 1px solid var(--hair); font-size: 11px; font-weight: 500; color: var(--ink-muted); }
+.chg { display: flex; flex-direction: column; gap: 14px; }
+.chg-row { display: flex; gap: 12px; align-items: flex-start; }
+.chg-tag { flex: none; min-width: 80px; justify-content: center; margin-top: 2px; }
+.chg-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.chg-text { font-size: 14px; font-weight: 500; line-height: 1.6; color: var(--ink); }
+.chg-mag { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+
+/* ---------------- baris bukti ---------------- */
+.erow {
+  display: grid; grid-template-columns: 32px 74px minmax(0, 1fr) auto; gap: 12px; align-items: baseline;
+  padding: 12px 12px; border-bottom: 1px solid var(--hair-soft); border-radius: var(--r-md);
+  cursor: pointer;
+}
+.erow:hover { background: var(--sf-1); }
+.erow.open { background: var(--sf-2); box-shadow: var(--ring-select); border-bottom-color: transparent; }
+.erow .idx { font-size: 12px; color: var(--ink-muted); }
+.erow .metric { font-size: 14px; line-height: 1.55; color: var(--ink); }
+.erow .metric.long { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
+.erow .evalue { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.srcbadge { display: inline-block; width: 66px; text-align: center; border-radius: var(--r-xs); padding: 2px 0; font-size: 10px; font-weight: 600; letter-spacing: .06em; }
+.srcbadge-api       { background: rgba(0,153,255,.14); color: #63bcff; }
+.srcbadge-tool      { background: var(--sf-2); color: var(--ink-muted); }
+.srcbadge-jev       { background: rgba(212,77,240,.16); color: #e08cff; }
+.srcbadge-guardrail { background: rgba(255,85,119,.16); color: #ff90a6; }
+.edetail { background: var(--sf-2); border: 1px solid var(--hair); border-radius: var(--r-md); padding: 14px 16px 18px; margin: 8px 0 12px; }
+
+.fchip {
+  border: 1px solid var(--hair); background: transparent; color: var(--ink-muted);
+  padding: 4px 12px; font-size: 12px; border-radius: var(--r-pill); cursor: pointer; min-height: 34px;
+}
+.fchip:hover { color: var(--ink); border-color: #3a3a3a; }
+.fchip.on { background: var(--sf-2); border-color: rgba(0,153,255,.5); color: var(--ink); }
+.fchip b { margin-left: 6px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.toolbar { display: flex; align-items: center; gap: var(--s-xs); row-gap: 8px; flex-wrap: wrap; margin-bottom: var(--s-md); }
+
+/* ---------------- transkrip ---------------- */
+.seg { border: 1px solid var(--hair-soft); background: var(--sf-1); border-radius: var(--r-lg); margin-bottom: 8px; overflow: hidden; }
+.seg.open { border-color: rgba(0,153,255,.4); }
+.seg-head { display: flex; align-items: center; gap: var(--s-sm); width: 100%; padding: 12px 14px; background: transparent; border: 0; text-align: left; cursor: pointer; min-height: 48px; }
+.seg-chev { font-size: 14px; padding: 4px; }
+.seg-head:hover { background: var(--sf-2); }
+.seg-sum { padding: 0 14px 12px; font-size: 13px; color: var(--ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.seg-body { padding: 4px 14px 14px; border-top: 1px solid var(--hair-soft); }
+.kbadge { display: inline-block; border-radius: var(--r-xs); padding: 2px 8px; font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; background: var(--sf-2); color: var(--ink-muted); }
+.kbadge-decision  { background: rgba(212,77,240,.16); color: #e08cff; }
+.kbadge-verdict   { background: rgba(0,153,255,.14); color: #63bcff; }
+.kbadge-guardrail { background: rgba(255,85,119,.16); color: #ff90a6; }
+.kbadge-tool      { background: var(--sf-2); color: var(--ink-muted); }
+.kbadge-brief, .kbadge-ledger { background: rgba(34,197,94,.14); color: #6ee7a3; }
+.code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+  background: var(--canvas); border: 1px solid var(--hair); border-radius: var(--r-md);
+  padding: 14px; margin: 8px 0 0; max-height: 340px; overflow: auto; color: #cfcfcf;
+}
+.transcript { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.5; color: #cfcfcf; }
+.prose { white-space: pre-wrap; margin: 8px 0 0; font-size: 14px; line-height: 1.5; }
+.empty { padding: var(--s-xl) 0; text-align: center; font-size: 14px; color: var(--ink-muted); }
+
+/* ---------------- dock agen ---------------- */
+.dock { display: flex; flex-direction: column; min-height: 0; background: var(--sf-1); border-left: 1px solid var(--hair); }
+.dock-head { display: flex; align-items: center; gap: var(--s-sm); padding: 12px 16px; border-bottom: 1px solid var(--hair-soft); }
+.dock-state { font-size: 12px; color: var(--ink-muted); }
+.logline { display: flex; gap: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5; color: #A6A6A6; }
+.logline .at { color: #8C8C8C; flex: none; }
+.logline.tool { color: #63bcff; }
+.logline.tool_result { color: #9A9A9A; }
+.logline.thesis { color: var(--ink); font-weight: 600; }
+.logline.done { color: #6ee7a3; }
+.logline.error { color: #ff90a6; }
+.pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-blue); animation: p 1.4s infinite; flex: none; }
+@keyframes p { 0%,100% { opacity: .2; } 50% { opacity: 1; } }
+
+/* ---------------- footer ---------------- */
+.foot { margin-top: var(--s-section); padding-top: var(--s-xxl); border-top: 1px solid var(--hair); }
+.foot-grid { display: grid; grid-template-columns: 1.3fr 2fr; gap: var(--s-xxl); }
+.foot-brand { font-size: 15px; font-weight: 600; letter-spacing: -.03em; }
+.foot-brand span { display: block; margin-top: 6px; font-size: 13px; font-weight: 400; letter-spacing: -.01em; color: var(--ink-muted); }
+.foot-cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s-lg); }
+.foot-h { display: block; margin-bottom: 10px; font-size: 13px; font-weight: 600; color: var(--ink); }
+.foot-cols a, .foot-cols span { display: block; font-size: 13px; color: var(--ink-muted); padding: 3px 0; }
+.foot-cols a:hover { color: var(--ink); }
+.foot-note { margin-top: var(--s-xl); font-size: 12px; color: var(--ink-muted); }
+
+/* ---------------- section ---------------- */
+/* Judul rute + aksi utama: header kerja, bukan pembuka pemasaran. */
+.qhead { display: flex; flex-direction: column; gap: var(--s-md); padding-top: 24px; }
+.qhead-top { display: flex; align-items: center; gap: var(--s-md); flex-wrap: wrap; }
+.qhead .banner { margin-top: 16px; }
+.qstats {
+  display: flex; flex-wrap: wrap; gap: 8px 20px;
+  padding-top: var(--s-md); border-top: 1px solid var(--hair-soft);
+}
+.qstat { font-size: 13px; color: var(--ink-muted); }
+.qstat b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.section { margin-top: var(--s-section); }
+.secttl { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--s-lg); }
+.secttl .d-md { margin-top: 2px; }
+.grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-lg); }
+
+/* ---------------- responsive ---------------- */
+@media (min-width: 1280px) {
+  .work.dock-hidden .dock { display: none; }
+}
+@media (max-width: 1279px) {
+  .work, .work.with-rail, .work.with-rail.rail-hidden,
+  .work.dock-hidden, .work.with-rail.dock-hidden, .work.with-rail.rail-hidden.dock-hidden { grid-template-columns: minmax(0, 1fr); }
+  .work.with-rail { grid-template-rows: auto minmax(0, 1fr); }
+  .work.with-rail .rail { grid-row: 1; }
+  .work .main { grid-row: -1; }
+  .rail { flex-direction: row; overflow-x: auto; overflow-y: hidden; border-right: 0; border-bottom: 1px solid var(--hair); scroll-snap-type: x mandatory; }
+  .rail-head { position: static; border-bottom: 0; border-right: 1px solid var(--hair-soft); }
+  .rail-item { min-width: 240px; border-bottom: 0; border-right: 1px solid var(--hair-soft); scroll-snap-align: start; }
+  .rail-empty { padding: 14px 16px; white-space: nowrap; }
+  .dock {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 45;
+    max-height: 52vh; border-left: 0; border-top: 1px solid var(--hair);
+    border-radius: var(--r-xl) var(--r-xl) 0 0;
+    box-shadow: var(--shadow-lift);
+    transform: translateY(101%); transition: transform .28s cubic-bezier(.2,.8,.2,1);
+  }
+  .dock.open { transform: none; }
+  .work.dock-open .main-inner { padding-bottom: 40vh; }
+  .dock-toggle { display: inline-flex; }
+}
+@media (max-width: 900px) {
+  .topnav { grid-template-columns: auto 1fr auto; }
+  .brand-sub, .dock-peek span { display: none; }
+  .navpills {
+    display: none; position: absolute; top: 56px; left: var(--s-lg); right: var(--s-lg);
+    flex-direction: column; align-items: stretch; background: var(--sf-1);
+    border: 1px solid var(--hair); border-radius: var(--r-xl); padding: var(--s-xs); gap: 2px;
+    box-shadow: var(--shadow-lift);
+  }
+  .navpills.open { display: flex; }
+  .navpill { justify-content: flex-start; min-height: 44px; }
+  .hamburger { display: inline-flex; }
+}
+@media (max-width: 809px) {
+  .main-inner { padding-left: var(--s-lg); padding-right: var(--s-lg); }
+  .brand-sub { display: none; }
+  .grid-2 { grid-template-columns: minmax(0, 1fr); }
+  .foot-grid, .foot-cols { grid-template-columns: minmax(0, 1fr); gap: var(--s-lg); }
+  .erow { grid-template-columns: 26px 66px minmax(0, 1fr); }
+  .erow .evalue { grid-column: 3; text-align: left; margin-top: 2px; }
+}
+</style>
+</head>
+
+<body>
+  <div id="root"></div>
+
+  <script src="data.js"></script>
+  <script>
+  'use strict';
+
+  /* =====================================================================
+     Thesis Radar — static Tailwind dashboard.
+
+     Mirrors web/src (React) 1:1: same routes, same vocabulary, same panes.
+     Talks to `thesisradar serve` when it is reachable; otherwise renders
+     the data.js snapshot taken from the live store, and the check button
+     plays back a labelled simulation of the agent loop instead of faking
+     a new verdict.
+     ===================================================================== */
+
+  const SNAP = window.RADAR_SNAPSHOT || null;
+
+  /* ------------------------------------------------------------------ *
+   * format.ts — presentation vocabulary in one place
+   * ------------------------------------------------------------------ */
+  const STATUS_LABEL = { intact: 'INTACT', weakened: 'WEAKENED', broken: 'BROKEN',
+                         needs_review: 'REVIEW', unknown: 'UNKNOWN' };
+  const RAIL_LABEL = STATUS_LABEL;
+  const CHIP_LABEL = STATUS_LABEL;
+  const STATE_LABEL  = { supported: 'INTACT', weakening: 'WEAKENED',
+                         broken: 'BROKEN', unknown: 'UNKNOWN' };
+
+  function parseISO(iso) { return Date.parse(iso.replace(/(\d{2})(\d{2})$/, '$1:$2')); }
+
+  function relative(iso) {
+    if (!iso) return 'never';
+    const then = parseISO(iso);
+    if (Number.isNaN(then)) return iso;
+    const seconds = Math.round((Date.now() - then) / 1000);
+    if (seconds < 60) return 'just now';
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 60) return minutes + 'm ago';
+    const hours = Math.round(minutes / 60);
+    if (hours < 48) return hours + 'h ago';
+    return Math.round(hours / 24) + 'd ago';
+  }
+  function shortDate(iso) { return iso ? iso.slice(0, 10) : '—'; }
+  function fmtConf(v) { return v == null ? '—' : v.toFixed(2); }
+
+  function esc(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  /* Status carries surface-lift (canvas → surface-1 → surface-2) plus a 6px
+     dot whose hue comes from the documented palette: hijau semantik untuk
+     intact, keluarga gradient untuk sisanya. Chroma tetap jadi sinyal, bukan
+     permukaan — jadi chrome halaman tetap monokrom. */
+  function statusPill(status, label) {
+    const tone = status == null ? 'unknown' : status;
+    const text = label != null ? label : (STATUS_LABEL[tone] || String(tone).toUpperCase());
+    return '<span class="chip"><i class="dot dot-' + esc(tone) + '"></i>' + esc(text) + '</span>';
+  }
+  function chip(status) {
+    if (status == null) return statusPill('unknown', 'RUNNING');
+    return statusPill(status, CHIP_LABEL[status] || String(status).toUpperCase());
+  }
+  function railChip(status) {
+    if (status == null) return statusPill('unknown', 'RUNNING');
+    return statusPill(status, RAIL_LABEL[status] || String(status).toUpperCase());
+  }
+  function stateChip(state) {
+    const v = state || 'unknown';
+    const tone = v === 'supported' ? 'intact' : v === 'weakening' ? 'weakened'
+               : v === 'broken' ? 'broken' : 'unknown';
+    return '<span class="chip"><i class="dot dot-' + tone + '"></i>' + esc(STATE_LABEL[v] || 'UNKNOWN') + '</span>';
+  }
+  /* Which layer produced the verdict — the product's central claim, made visible. */
+  function decisionBadge(path) {
+    if (path === 'jev')             return '<span class="badge" title="decided by Jev from measured data; no agent turn needed">JEV</span>';
+    if (path === 'jev+agent')       return '<span class="badge" title="Jev decided the claims; the agent added context">JEV+AGENT</span>';
+    if (path === 'agent_unverified')return '<span class="badge badge-alert" title="the prose cited a figure the evidence does not contain">UNVERIFIED</span>';
+    if (path === 'agent')           return '<span class="badge" title="decided by the model alone; confidence is capped">AGENT</span>';
+    if (path === 'measurement')     return '<span class="badge" title="no interpretation layer was available">MEASURED</span>';
+    return '';
+  }
+
+  /* ------------------------------------------------------------------ *
+   * data access — live server when reachable, snapshot otherwise
+   * ------------------------------------------------------------------ */
+  const state = {
+    view: parseHash(),
+    mode: 'boot',            // 'live' | 'offline'
+    stats: null,
+    fatal: null,
+    job: null,               // live job record (from /api/job)
+    simJob: null,            // offline playback job
+    refresh: 0,
+    queue: [],
+    notifications: [],
+    drafts: null,
+    thesis: {},              // id -> ThesisDetail
+    check: {},               // id -> CheckDetail
+    selectedCheck: {},       // thesis id -> check id
+    evFilter: {},            // check id -> {source, q, open, copied}
+    trOpen: {},              // check id -> ordinal | null
+    trRaw: {},               // check id -> bool
+    menu: false,             // hamburger disclosure (< 900px)
+    dock: !window.matchMedia('(max-width: 1279px)').matches,  // agent log column / bottom sheet
+    rail: true,              // thesis list column on the workspace view
+    compose: { symbol: '', statement: '', horizon: '2 quarters', result: null, busy: false, note: null, error: null },
+  };
+
+  function parseHash() {
+    const hash = (location.hash || '').replace(/^#\/?/, '');
+    const parts = hash.split('/');
+    if (parts[0] === 'thesis' && parts[1]) return { name: 'thesis', id: decodeURIComponent(parts[1]) };
+    if (parts[0] === 'new') return { name: 'new' };
+    if (parts[0] === 'notifications') return { name: 'notifications' };
+    return { name: 'queue' };
+  }
+
+  const isNarrow = () => window.matchMedia('(max-width: 1279px)').matches;
+
+  async function jfetch(path, init) {
+    const res = await fetch(path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, init));
+    const text = await res.text();
+    let payload = null;
+    if (text) { try { payload = JSON.parse(text); } catch { payload = { detail: text.slice(0, 400) }; } }
+    if (!res.ok) {
+      const d = payload && payload.detail;
+      throw new Error(typeof d === 'string' ? d : (d != null ? JSON.stringify(d) : 'HTTP ' + res.status));
+    }
+    return payload;
+  }
+
+  async function probeMode() {
+    if (!SNAP) { state.mode = 'live'; return; }
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 1500);
+      const s = await jfetch('/api/stats', { signal: ctrl.signal });
+      clearTimeout(t);
+      state.mode = s && s.store ? 'live' : 'offline';
+    } catch { state.mode = 'offline'; }
+  }
+
+  async function loadAll() {
+    if (state.mode === 'live') {
+      try {
+        const [stats, queue, notifs] = await Promise.all([
+          jfetch('/api/stats'), jfetch('/api/queue'), jfetch('/api/notifications'),
+        ]);
+        state.stats = stats;
+        state.queue = queue.theses;
+        state.notifications = notifs.notifications;
+        state.job = stats.job || null;
+        state.fatal = null;
+        for (const row of state.queue) {
+          // always re-read in live mode: mutations (watch, checks) change these
+          state.thesis[row.id] = await jfetch('/api/thesis/' + encodeURIComponent(row.id));
+          for (const c of state.thesis[row.id].checks) {
+            if (!state.check[c.id]) state.check[c.id] = await jfetch('/api/check/' + encodeURIComponent(c.id));
+          }
+        }
+        if (state.view.name === 'thesis' && state.selectedCheck[state.view.id]) {
+          // a running check rewrites its verdict — re-read what is on screen
+          const sel = state.selectedCheck[state.view.id];
+          state.check[sel] = await jfetch('/api/check/' + encodeURIComponent(sel));
+        }
+      } catch (err) {
+        state.fatal = err && err.message ? err.message : String(err);
+        if (!state.stats) state.stats = SNAP && SNAP.stats || null; // render what we have
+      }
+    } else {
+      state.stats = SNAP && SNAP.stats || null;
+      state.queue = (SNAP && SNAP.queue || []).map(r => Object.assign({}, r));
+      state.notifications = (SNAP && SNAP.notifications || []).map(n => Object.assign({}, n));
+      state.thesis = (SNAP && SNAP.theses) || {};
+      state.check = (SNAP && SNAP.checks) || {};
+      state.drafts = SNAP && SNAP.drafts || null;
+      state.job = null;
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * live job panel — SSE against the server, playback against snapshot
+   * ------------------------------------------------------------------ */
+  function activeJob() { return state.simJob || state.job; }
+  function jobEvents() {
+    const job = activeJob();
+    if (!job) return [];
+    return job.events || [];
+  }
+  function jobRunning() {
+    const job = activeJob();
+    return job ? job.state === 'running' : false;
+  }
+
+  function describe(event) {
+    if (event.kind === 'tool') {
+      const args = event.args ? JSON.stringify(event.args) : '{}';
+      return event.tool + '  ' + args.slice(0, 90) + (args.length > 90 ? '...' : '');
+    }
+    if (event.kind === 'tool_result') return '      ' + event.tool + ' cost ' + event.credits + ' credit(s)';
+    if (event.kind === 'thinking')    return 'round ' + event.round + ' — deciding';
+    if (event.kind === 'measured')    return 'measured without a model: ' + event.status + ' — ' + event.reason;
+    if (event.kind === 'thesis')      return 'checking ' + event.symbol;
+    if (event.kind === 'engine')      return 'engine: ' + event.detail;
+    if (event.kind === 'done')        return 'verdict ' + event.status + ' (confidence ' + event.confidence + ')';
+    return event.kind;
+  }
+
+  function hhmmss(date) {
+    const p = n => String(n).padStart(2, '0');
+    return p(date.getHours()) + ':' + p(date.getMinutes()) + ':' + p(date.getSeconds());
+  }
+
+  let es = null;
+  function connectSSE() {
+    if (state.mode !== 'live') return;
+    if (es) { es.close(); es = null; }
+    es = new EventSource('/api/events');
+    es.addEventListener('step', raw => {
+      try {
+        const ev = JSON.parse(raw.data);
+        if (ev && typeof ev === 'object' && 'kind' in ev && state.job) {
+          state.job = Object.assign({}, state.job, { events: (state.job.events || []).concat([ev]) });
+          renderLive();
+          scrollLive();
+        }
+      } catch { /* malformed frame is skipped, not rendered as garbage */ }
+    });
+    es.addEventListener('finished', raw => {
+      let record = {};
+      try { record = JSON.parse(raw.data) || {}; } catch {}
+      if (state.job) state.job = Object.assign({}, state.job, { state: record.state || 'done', error: record.error || null });
+      render();
+      refreshSoon();
+    });
+    es.addEventListener('idle', () => { if (!state.job) renderLive(); });
+    es.onerror = () => { /* EventSource retries on its own */ };
+  }
+
+  /* Offline playback: walk the newest stored check's transcript so the loop
+     is legible without pretending a new verdict was computed. */
+  async function simulateCheck(thesisId) {
+    const detail = state.thesis[thesisId] && (state.thesis[thesisId].latest
+      || state.check[state.thesis[thesisId].last_check && state.thesis[thesisId].last_check.id]);
+    const th = state.thesis[thesisId];
+    if (!th) return;
+    const job = { kind: 'check', symbol: th.symbol, state: 'running', started_at: new Date().toISOString(), events: [], simulation: true };
+    state.simJob = job;
+    const push = (kind, extra) => {
+      job.events = job.events.concat([Object.assign({ at: hhmmss(new Date()), kind }, extra)]);
+      renderLive(); scrollLive();
+    };
+    push('thesis', { symbol: th.symbol });
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    await wait(450);
+    const segs = (detail && detail.transcript_segments || []).slice(1);
+    for (const seg of segs) {
+      if (seg.kind === 'tool' || seg.kind === 'ledger') {
+        push('tool', { tool: seg.tool || (seg.title.match(/`([^`]+)`/) || [])[1] || 'free read', args: { thesis: th.symbol } });
+        await wait(500);
+        push('tool_result', { tool: seg.tool || seg.label, credits: 0 });
+        await wait(300);
+      } else if (seg.kind === 'decision') {
+        push('thinking', { round: 1 });
+        await wait(600);
+      }
+    }
+    const verdict = detail && detail.verdict || th.status;
+    push('done', { status: verdict, confidence: fmtConf(detail && detail.confidence) });
+    job.state = 'done';
+    await wait(400);
+    /* keep the finished job on the panel — same as the React app, which shows
+       the last job from /api/stats until the next one starts */
+    render();
+  }
+
+  /* ------------------------------------------------------------------ *
+   * mutations
+   * ------------------------------------------------------------------ */
+  async function mutate(path, body, onOk) {
+    if (state.mode !== 'live') {
+      if (onOk) onOk();
+      return;
+    }
+    try {
+      await jfetch(path, { method: 'POST', body: JSON.stringify(body || {}) });
+    } catch (err) {
+      state.fatal = err.message || String(err);
+    }
+    if (onOk) onOk();
+  }
+
+  async function runCheck(thesisId) {
+    if (isNarrow()) state.dock = true;
+    if (state.mode === 'live') {
+      await mutate('/api/thesis/' + encodeURIComponent(thesisId) + '/check', {}, () => refreshSoon());
+    } else {
+      render();
+      simulateCheck(thesisId);
+    }
+  }
+  async function checkAll() {
+    if (state.mode !== 'live') return;
+    if (isNarrow()) state.dock = true;
+    await mutate('/api/check-all', {}, () => refreshSoon());
+  }
+  async function toggleWatch(thesis) {
+    await mutate('/api/watch', { symbol: thesis.symbol, action: thesis.watch ? 'remove' : 'add' }, bump);
+  }
+  function markRead() {
+    if (state.mode === 'live') {
+      mutate('/api/notifications/read', {}, bump);
+    } else {
+      state.notifications = state.notifications.map(n => Object.assign({}, n, { read: 1 }));
+      if (state.stats) state.stats = Object.assign({}, state.stats, { store: Object.assign({}, state.stats.store, { unread: 0 }) });
+      render();
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * shell + views
+   * ------------------------------------------------------------------ */
+  const root = document.getElementById('root');
+
+  function refreshSoon() {
+    state.refresh++;
+    loadAll().then(render);
+  }
+  function engineInfo() {
+    const engine = (state.stats && state.stats.engine) || {};
+    const live = Object.entries(engine).find(([, info]) => info && info.available);
+    return { name: live ? live[0] : 'none', jev: state.stats && state.stats.jev };
+  }
+  function jobSummary() {
+    const job = activeJob();
+    const running = jobRunning();
+    const dot = running ? '<span class="pulse"></span>'
+      : job && job.state === 'done' ? '<i class="dot dot-intact"></i>'
+      : job && job.state === 'error' ? '<i class="dot dot-broken"></i>'
+      : '<i class="dot dot-unknown"></i>';
+    const label = !job ? 'idle' : running ? ('checking ' + (job.symbol || job.kind)) : (job.state + (job.simulation ? ' · sim' : ''));
+    return { job, running, dot, label };
+  }
+
+  function headerHTML() {
+    const v = state.view.name;
+    const store = (state.stats && state.stats.store) || null;
+    const unread = (store && store.unread) || 0;
+    const summary = jobSummary();
+    const links = [['queue', 'Queue'], ['new', 'New thesis'], ['notifications', 'Notifications']];
+    return `
+    <header class="topnav">
+      <div class="topnav-left">
+        <a class="brand" href="#/queue">
+          <span class="brand-mark">Thesis Radar</span>
+          <span class="brand-sub">does the thesis still hold?</span>
+        </a>
+      </div>
+      <nav class="navpills ${state.menu ? 'open' : ''}" id="navpills" aria-label="primary">
+        ${links.map(([k, label]) => `
+          <a href="#/${k}" class="navpill ${v === k ? 'on' : ''}" data-nav>
+            ${esc(label)}${k === 'notifications' && unread ? ` <b class="navcount">${unread}</b>` : ''}
+          </a>`).join('')}
+      </nav>
+      <div class="topnav-right">
+        <button class="dock-peek" data-act="dock" title="Toggle agent log" aria-expanded="${state.dock ? 'true' : 'false'}" ${state.dock ? 'hidden' : ''}>${summary.dot}<span>${esc(summary.label)}</span></button>
+        <button class="btn btn-ghost btn-icon hamburger" data-act="menu" aria-label="Open menu" aria-expanded="${state.menu ? 'true' : 'false'}">&#9776;</button>
+        <div class="navcta">
+          <button class="btn btn-primary" data-act="check-all" ${summary.running || state.mode !== 'live' ? 'disabled title="needs a live server"' : ''}>
+            ${summary.running ? 'Running…' : 'Check all'}</button>
+        </div>
+        <button class="btn btn-secondary btn-icon dock-toggle" data-act="dock" aria-label="Agent log" aria-expanded="${state.dock ? 'true' : 'false'}" ${state.dock ? 'hidden' : ''}>
+          ${summary.running ? '<i class="pulse"></i>' : '<i class="dot dot-unknown"></i>'}
+        </button>
+      </div>
+    </header>`;
+  }
+
+  function withRailVisible() {
+    return state.view.name === 'thesis' && state.rail !== false;
+  }
+
+  function railHTML(selectedId) {
+    if (!withRailVisible()) {
+      const items = state.queue.map(row => {
+        const tone = row.status == null ? 'unknown' : row.status;
+        return `
+        <a href="#/thesis/${esc(row.id)}" class="rail-strip-item ${row.id === selectedId ? 'selected' : ''}" data-nav title="${esc(row.symbol)}${row.company_name ? ' — ' + esc(row.company_name) : ''}">
+          <i class="dot dot-${esc(tone)}"></i>
+          <span class="rail-strip-sym">${esc(row.symbol)}</span>
+        </a>`;
+      }).join('');
+      return `
+      <aside class="rail rail-collapsed" aria-label="thesis list, collapsed">
+        <div class="rail-head rail-head-strip">
+          <button class="btn btn-ghost btn-icon rail-edge" data-act="rail" aria-label="Expand thesis list" aria-expanded="false" title="Expand">›</button>
+        </div>
+        ${state.queue.length ? items : '<div class="rail-empty">—</div>'}
+      </aside>`;
+    }
+    const items = state.queue.map(row => {
+      const changeLine = row.changes && row.changes.length
+        ? `↳ ${esc(row.changes[0].text.slice(0, 120))}`
+        : `${row.claims} claim(s) · never checked`;
+      return `
+      <a href="#/thesis/${esc(row.id)}" class="rail-item ${row.id === selectedId ? 'selected' : ''}" data-nav>
+        <div class="pillrow" style="gap:10px">
+          ${railChip(row.status)}
+          <span class="rail-sym">${esc(row.symbol)}</span>
+          <span class="spacer"></span>
+          <span class="mono muted">${row.confidence == null ? '' : row.confidence.toFixed(2)}</span>
+        </div>
+        <div class="rail-note">${changeLine}</div>
+      </a>`;
+    }).join('');
+    return `
+    <aside class="rail" aria-label="thesis list">
+      <div class="rail-head">
+        <button class="btn btn-ghost btn-icon rail-edge" data-act="rail" aria-label="Collapse thesis list" aria-expanded="true" title="Collapse">‹</button>
+        <span class="eyebrow">Theses</span>
+        <span class="spacer"></span>
+        <button class="btn btn-ghost" style="padding:6px 12px;min-height:30px;font-size:13px" data-act="check-all"
+          ${jobRunning() || state.mode !== 'live' ? 'disabled title="needs a live server"' : ''}>Check all</button>
+      </div>
+      ${state.queue.length ? items : '<div class="rail-empty">no theses yet</div>'}
+    </aside>`;
+  }
+
+  function footerHTML() {
+    const store = (state.stats && state.stats.store) || {};
+    return `
+    <footer class="foot">
+      <div class="foot-grid">
+        <div>
+          <div class="foot-brand">Thesis Radar<span>does the thesis still hold?</span></div>
+        </div>
+        <div class="foot-cols">
+          <div>
+            <span class="foot-h">Routes</span>
+            <a href="#/queue" data-nav>Queue</a>
+            <a href="#/new" data-nav>New thesis</a>
+            <a href="#/notifications" data-nav>Notifications</a>
+          </div>
+          <div>
+            <span class="foot-h">Machine</span>
+            <span>${esc(engineInfo().name)}</span>
+            <span>jev ${esc((engineInfo().jev && engineInfo().jev.model) || 'off')}</span>
+            <span>${state.mode === 'live' ? 'live server' : 'snapshot mode'}</span>
+          </div>
+          <div>
+            <span class="foot-h">Data</span>
+            <span>${store.theses == null ? '—' : store.theses + ' theses'}</span>
+            <span>${store.checks == null ? '—' : store.checks + ' checks'}</span>
+            <span>snapshot ${esc((SNAP && SNAP.at) || '—')}</span>
+          </div>
+        </div>
+      </div>
+      <p class="foot-note">Numbers are computed in code, judgment is by the agent. A monitor of investment reasoning, not investment advice.</p>
+    </footer>`;
+  }
+
+  /* ---------------- queue ---------------- */
+  function queueView() {
+    const rows = state.queue;
+    const counts = {};
+    for (const r of rows) counts[r.status] = (counts[r.status] || 0) + 1;
+    const store = (state.stats && state.stats.store) || {};
+    const credits = (state.stats && state.stats.credits) || {};
+    const { name: engineName, jev } = engineInfo();
+    const watched = rows.filter(r => r.watch).length;
+    const body = rows.length === 0 ? `
+      <div class="card"><p class="empty">No theses yet. Write one in <a href="#/new">New thesis</a> — for example
+        <em>&ldquo;BBRI loans grow at least 10% YoY&rdquo;</em>.</p></div>` : `
+      <div class="list">
+        ${rows.map(row => {
+          const change = row.changes && row.changes.length ? row.changes[0] : null;
+          const changeLine = change
+            ? `${esc(change.text)}${change.magnitude ? ` <span class="muted">· ${esc(change.magnitude)}</span>` : ''}`
+            : `<span class="muted">${esc((row.last_check && row.last_check.summary) || 'Never checked.')}</span>`;
+          return `
+          <a class="rowcard" href="#/thesis/${esc(row.id)}" data-open="${esc(row.id)}">
+            <div class="rowcard-top">
+              ${railChip(row.status)}
+              <span class="rowcard-sym">${esc(row.symbol)}</span>
+              <span class="spacer"></span>
+              <span class="rowcard-conf">confidence <b>${esc(fmtConf(row.confidence))}</b></span>
+            </div>
+            ${row.company_name ? `<div class="rowcard-cname">${esc(row.company_name)}</div>` : ''}
+            <p class="rowcard-stmt">${esc(row.statement)}</p>
+            <div class="rowcard-delta"><span class="arw">&#8627;</span><span>${changeLine}</span></div>
+            <div class="rowcard-meta">
+              <span class="meta-group">
+                <span>${row.claims} claims</span>
+                <span>${row.last_check ? row.last_check.tool_calls + ' tool calls' : '—'}</span>
+                <span title="${esc(row.last_checked_at || '')}">${esc(relative(row.last_checked_at))}</span>
+              </span>
+              <span class="spacer"></span>
+              <span class="meta-group">
+                ${row.watermark ? `<span>watermark since ${esc(shortDate(row.watermark))}</span>` : ''}
+                ${row.watch ? '<span class="tag"><i class="dot dot-intact"></i>watched</span>' : ''}
+              </span>
+            </div>
+          </a>`;
+        }).join('')}
+      </div>`;
+
+    return `
+    <section class="qhead">
+      <div class="qhead-top">
+        <h1 class="headline">Thesis queue</h1>
+        <span class="qhead-count micro muted">${rows.length} theses · ${esc(['broken', 'weakened', 'needs_review', 'intact', 'unknown']
+          .filter(s => counts[s]).map(s => counts[s] + ' ' + (RAIL_LABEL[s] || s).toLowerCase()).join(' · ') || 'no theses yet')}</span>
+        <span class="spacer"></span>
+        <div class="pillrow">
+          <a href="#/new"><button class="btn btn-secondary" type="button">+ New thesis</button></a>
+          <button class="btn btn-primary" data-act="check-all" ${jobRunning() || state.mode !== 'live' ? 'disabled title="needs a live server"' : ''}>
+            ${jobRunning() ? 'Running…' : 'Check all'}</button>
+        </div>
+      </div>
+      ${state.fatal && state.mode === 'live' ? `<div class="banner banner-bad">${esc(state.fatal)}</div>` : ''}
+      ${state.mode === 'offline' ? `<div class="banner banner-warn">Snapshot mode — data as of ${esc(SNAP && SNAP.at || '?')} with no live server. Checks replay as a simulation; writes need <code class="mono">thesisradar serve</code>.</div>` : ''}
+      <div class="qstats">
+        <span class="qstat"><b>${watched}/${rows.length}</b> watched</span>
+        <span class="qstat"><b>${store.checks == null ? '—' : store.checks}</b> checks</span>
+        <span class="qstat"><b>${credits.credits_spent == null ? '—' : credits.credits_spent}</b> credits${credits.network_calls == null ? '' : ` (${credits.network_calls} network · ${credits.cached_calls} cached)`}</span>
+        <span class="qstat"><b>${state.mode === 'live' ? esc(engineName) : 'snapshot'}</b> engine</span>
+        <span class="qstat"><b>${jev && jev.available ? esc(jev.model || 'on') : 'off'}</b> jev</span>
+      </div>
+    </section>
+
+    <section class="section" style="margin-top:var(--s-xl)">
+      ${body}
+    </section>
+
+    <section class="section">
+      <div class="secttl">
+        <span class="eyebrow">how it works</span>
+        <h2 class="d-md">How this product works</h2>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <h3 class="headline">Numbers are computed in code, judgment by the agent</h3>
+          <p class="body-sm muted" style="margin-top:10px">Latest values, YoY changes, and threshold tests are computed
+            in Python from stored data. No number in a verdict is typed by the model. The agent uses them
+            to answer what cannot be computed: whether a move belongs to the company or the whole
+            market, whether a price moved on corporate action, and whether the written thesis still makes sense.</p>
+        </div>
+        <div class="card">
+          <h3 class="headline">Watermark</h3>
+          <p class="body-sm muted" style="margin-top:10px">Every check stores a date. The next check
+            only reads what is new since that date — which is why the &ldquo;latest change&rdquo; row above has content,
+            and why re-checking costs almost no credits.</p>
+        </div>
+      </div>
+    </section>`;
+  }
+
+  /* ---------------- compose ---------------- */
+  function composeView() {
+    const c = state.compose;
+    if (c.result) {
+      const split = c.result.split;
+      const unresolved = split.unresolved || [];
+      return `
+        <section class="qhead">
+          <div class="qhead-top">
+            <h1 class="headline">Saved thesis</h1>
+            <span class="qhead-count micro muted">split into ${split.claims.length} checkable claims${unresolved.length ? `, ${unresolved.length} not checkable` : ''}</span>
+          </div>
+          <div class="qstats">
+            <span class="qstat">split by <b>${split.mode === 'model' ? 'model' : 'offline heuristic'}</b></span>
+            <span class="qstat"><b>${c.result.credits}</b> baseline credits</span>
+          </div>
+        </section>
+        ${unresolved.length ? `
+        <div class="card" style="margin-top:var(--s-lg)">
+          <span class="eyebrow">not checkable</span>
+          <ul class="bullets body-sm muted" style="margin-top:10px">
+            ${unresolved.map(u => `<li>${esc(u.text)} — <span class="dim">${esc(u.reason)}</span></li>`).join('')}
+          </ul>
+        </div>` : ''}
+        <div class="pillrow" style="margin-top:var(--s-xl)">
+          <button class="btn btn-primary" data-act="open-result" data-id="${esc(c.result.id)}">Open thesis file</button>
+          <button class="btn btn-secondary" data-act="reset-compose">Write another</button>
+        </div>`;
+    }
+    const drafts = (state.drafts && state.drafts.drafts) || [];
+    const skipped = (state.drafts && state.drafts.skipped) || [];
+    return `
+      <section class="qhead">
+        <div class="qhead-top">
+          <h1 class="headline">New thesis</h1>
+          <span class="qhead-count micro muted">the agent splits it into checkable claims</span>
+        </div>
+        ${c.error ? `<div class="banner banner-bad">${esc(c.error)}</div>` : ''}
+        ${state.mode === 'offline' ? '<div class="banner banner-warn">Snapshot mode: saving a thesis needs a live server — the form still works up to the save step.</div>' : ''}
+      </section>
+
+      <section class="grid-2" style="margin-top:var(--s-xl)">
+        <div>
+          <div class="secttl">
+            <span class="eyebrow">input</span>
+            <h2 class="d-md">Thesis</h2>
+          </div>
+          <div class="stack" style="gap:var(--s-md)">
+            <label class="field"><span>Ticker (IDX)</span>
+              <input id="f-symbol" class="input" value="${esc(c.symbol)}" placeholder="BBRI" /></label>
+            <label class="field"><span>Thesis</span>
+              <textarea id="f-statement" class="input" placeholder="Buy BBRI because loans grow at least 10% YoY and net interest income keeps rising, so earnings should keep climbing for two more quarters.">${esc(c.statement)}</textarea></label>
+            <label class="field"><span>Horizon</span>
+              <input id="f-horizon" class="input" value="${esc(c.horizon)}" /></label>
+            <div>
+              <button class="btn btn-primary" data-act="create"
+                ${c.busy || c.symbol.trim().length < 3 || c.statement.trim().length < 10 ? 'disabled' : ''}>
+                ${c.busy ? 'Splitting claims…' : 'Save &amp; split claims'}</button>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="secttl">
+            <span class="eyebrow">suggestion</span>
+            <h2 class="d-md">Or start from the numbers</h2>
+            <p class="body-sm muted">The agent reads the latest quarterly reports for the banking sector and writes theses that
+              already hold against the data — a starting point for you to edit, not investment advice.</p>
+          </div>
+          <div class="pillrow">
+            <button class="btn btn-secondary" data-act="drafts" ${c.note === 'Reading reports…' ? 'disabled' : ''}>Suggest 3 bank theses</button>
+            ${c.note ? `<span class="micro muted">${esc(c.note)}</span>` : ''}
+          </div>
+          ${drafts.length ? `<div class="stack" style="gap:var(--s-sm);margin-top:var(--s-lg)">${drafts.map(d => `
+            <div class="card card-tight">
+              <div class="pillrow" style="gap:10px">
+                <strong class="mono">${esc(d.symbol)}</strong><span class="micro muted">${esc(d.company_name || '')}</span>
+              </div>
+              <p class="body-sm" style="margin:8px 0 12px">${esc(d.statement)}</p>
+              <button class="btn btn-secondary" style="padding:8px 14px;min-height:34px;font-size:13px" data-act="use-draft" data-i="${esc(d.symbol)}">Use this</button>
+            </div>`).join('')}</div>` : ''}
+          ${skipped.length ? `
+          <div class="banner banner-warn" style="margin-top:var(--s-md)">
+            <strong>Could not draft:</strong>
+            <ul class="bullets caption" style="margin-top:6px">
+              ${skipped.map(s => `<li><span class="mono">${esc(s.symbol)}</span> — ${esc(s.reason)}</li>`).join('')}
+            </ul>
+            <div class="dim micro" style="margin-top:8px">The same guardrails used when checking a thesis also apply
+              when writing one. Building a thesis on a broken data series washes that error into your sentence.</div>
+          </div>` : ''}
+        </div>
+      </section>`;
+  }
+
+  /* ---------------- notifications ---------------- */
+  function notificationsView() {
+    const rows = state.notifications;
+    const tone = s => s === 'alert' ? 'broken' : s === 'warning' ? 'weakened' : s === 'ok' ? 'intact' : 'unknown';
+    return `
+      <section class="qhead">
+        <div class="qhead-top">
+          <h1 class="headline">Notifications</h1>
+          <span class="qhead-count micro muted">${rows.filter(r => !r.read).length ? rows.filter(r => !r.read).length + ' unread' : 'All read'} · only status changes appear here</span>
+          <span class="spacer"></span>
+          <button class="btn btn-secondary" data-act="mark-read" ${rows.filter(r => !r.read).length === 0 ? 'disabled' : ''}>Mark all read</button>
+        </div>
+        ${state.fatal && state.mode === 'live' ? `<div class="banner banner-bad">${esc(state.fatal)}</div>` : ''}
+      </section>
+
+      <section class="section" style="margin-top:var(--s-xl)">
+        ${rows.length === 0 ? '<div class="card"><p class="empty">No status changes yet. Checks ending in &ldquo;nothing changed&rdquo; stay quiet on purpose — that is the product working, not a failure.</p></div>' : `
+        <div class="list">
+        ${rows.map(n => `
+          <a class="rowcard rowcard-tight" href="#/thesis/${esc(n.thesis_id)}" data-open="${esc(n.thesis_id)}" style="${n.read ? 'background:var(--canvas);border-color:var(--hair-soft)' : ''}">
+            <div class="rowcard-top">
+              ${statusPill(tone(n.severity), String(n.severity || '').toUpperCase())}
+              <span class="rowcard-sym">${esc(n.symbol)}</span>
+              <span class="spacer"></span>
+              <span class="rowcard-conf" title="${esc(n.created_at)}">${esc(relative(n.created_at))}</span>
+            </div>
+            <p class="rowcard-stmt" style="margin-top:8px;${n.read ? 'color:var(--ink-muted)' : ''}">${esc(n.title)}</p>
+            <div class="rowcard-delta">${esc(n.body)}</div>
+          </a>`).join('')}
+        </div>`}
+      </section>`;
+  }
+
+  /* ---------------- thesis workspace ---------------- */
+  function readUnresolved(translation) {
+    if (!translation) return [];
+    try {
+      const parsed = JSON.parse(translation);
+      if (!parsed || typeof parsed !== 'object' || !('unresolved' in parsed)) return [];
+      const list = parsed.unresolved;
+      if (!Array.isArray(list)) return [];
+      return list.filter(Boolean).map(item => ({
+        text: typeof item.text === 'string' ? item.text : JSON.stringify(item),
+        reason: typeof item.reason === 'string' ? item.reason : '',
+      }));
+    } catch { return []; }
+  }
+
+  function changeStrip(changes) {
+    if (!changes || !changes.length) {
+      return '<p class="body-sm muted">Nothing has changed since the last check. That is the answer.</p>';
+    }
+    return `<div class="chg">${changes.map(ch => `
+      <div class="chg-row">
+        <span class="tag chg-tag">${esc(ch.kind || 'data')}</span>
+        <span class="chg-body">
+          <span class="chg-text">${esc(ch.text)}</span>
+          ${ch.magnitude ? `<span class="chg-mag">${esc(ch.magnitude)}</span>` : ''}
+        </span>
+      </div>`).join('')}</div>`;
+  }
+
+  function claimList(claims) {
+    if (!claims.length) return '<p class="body-sm muted">No checkable claims were extracted.</p>';
+    return `
+    <div style="overflow-x:auto">
+    <table class="tbl">
+      <thead><tr><th style="width:34px" class="num">#</th><th>Claim</th><th style="width:150px;min-width:140px">Metric</th>
+        <th style="width:120px">Direction</th><th style="width:110px;min-width:110px">Baseline</th></tr></thead>
+      <tbody>
+      ${claims.map(cl => `
+        <tr>
+          <td class="num muted">${cl.ordinal + 1}</td>
+          <td>${esc(cl.text)}</td>
+          <td class="mono">${cl.metric ? esc(cl.metric) : '<span class="dim">unresolved</span>'}</td>
+          <td class="mono">${esc(cl.direction || '—')}${cl.threshold != null ? ` <span class="dim">${esc(cl.comparator || '&gt;=')} ${cl.threshold}</span>` : ''}</td>
+          <td class="mono dim">${cl.baseline_value == null ? '—' : esc(shortDate(cl.baseline_date))}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+    </div>`;
+  }
+
+  /* evidence: source classification mirrors EvidenceTable.tsx */
+  function sourceOf(row) {
+    const endpoint = row.endpoint || '';
+    const metric = row.metric || '';
+    if (endpoint.startsWith('/v2/')) return 'api';
+    if (endpoint === 'tool:jev') return metric.startsWith('guardrail.') ? 'guardrail' : 'jev';
+    return 'tool';
+  }
+  const SOURCE_LABEL = { api: 'API', tool: 'TOOL', jev: 'JEV', guardrail: 'GUARD' };
+  const SOURCE_ORDER = ['api', 'tool', 'jev', 'guardrail'];
+
+  function parseParams(params) {
+    if (!params || params === '{}') return null;
+    try {
+      const parsed = JSON.parse(params);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    } catch { return null; }
+  }
+  function reproduction(row, sectorsBase) {
+    const params = parseParams(row.params);
+    if ((row.endpoint || '').startsWith('/v2/') && params) {
+      const search = new URLSearchParams();
+      for (const [k, v] of Object.entries(params)) {
+        if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') search.set(k, String(v));
+      }
+      const qs = search.toString();
+      return `curl -s -H "Authorization: $SECTORS_API_KEY" "${sectorsBase}${row.endpoint}${qs ? '?' + qs : ''}"`;
+    }
+    return `${row.endpoint || '?'} ${row.params || '{}'}`;
+  }
+
+  function evf(id) {
+    return state.evFilter[id] || (state.evFilter[id] = { source: 'all', q: '', open: null, copied: null });
+  }
+
+  function evidenceTable(detail) {
+    const rows = detail.evidence || [];
+    if (!rows.length) return '<p class="body-sm muted">No evidence rows were stored.</p>';
+    const f = evf(detail.id);
+    const counts = { api: 0, tool: 0, jev: 0, guardrail: 0 };
+    for (const r of rows) counts[sourceOf(r)] += 1;
+    const needle = f.q.trim().toLowerCase();
+    const visible = rows.filter(r => {
+      if (f.source !== 'all' && sourceOf(r) !== f.source) return false;
+      if (!needle) return true;
+      return [r.metric, r.value, r.endpoint, r.note].some(x => (x || '').toLowerCase().includes(needle));
+    });
+    const chips = [`<button class="fchip ${f.source === 'all' ? 'on' : ''}" data-ef-src="all">All<b>${rows.length}</b></button>`]
+      .concat(SOURCE_ORDER.filter(n => counts[n] > 0).map(n =>
+        `<button class="fchip ${f.source === n ? 'on' : ''}" data-ef-src="${n}" title="only rows from ${SOURCE_LABEL[n]}">${SOURCE_LABEL[n]}<b>${counts[n]}</b></button>`))
+      .join('');
+    return `
+      <div class="toolbar">
+        ${chips}
+        <span class="spacer"></span>
+        <input type="search" id="ef-search" class="input" value="${esc(f.q)}" placeholder="Search metric, value, or endpoint"
+          aria-label="Search evidence rows" style="width:auto;min-width:180px;max-width:320px;flex:1;padding:8px 12px;font-size:13px" />
+      </div>
+      ${visible.length === 0 ? '<p class="empty">No matching rows.</p>' : visible.map((row, index) => {
+        const kind = sourceOf(row);
+        const isOpen = f.open === row.id;
+        const params = parseParams(row.params);
+        const long = (row.metric || '').length > 40;
+        const cmd = reproduction(row, detail.sectors_base || '');
+        return `
+        <div>
+          <div class="erow ${isOpen ? 'open' : ''}" role="button" tabindex="0" aria-expanded="${isOpen}" data-ef-row="${esc(row.id)}">
+            <span class="idx num">${index + 1}</span>
+            <span class="srcbadge srcbadge-${kind}">${SOURCE_LABEL[kind]}</span>
+            <span class="metric ${long ? 'long' : ''}">${esc(row.metric || '—')}</span>
+            <span class="evalue">${esc(row.value || '—')}</span>
+          </div>
+          ${isOpen ? `
+          <div class="edetail">
+            <div class="mono dim">${esc(row.as_of || 'no date')}${row.symbol ? ' · ' + esc(row.symbol) : ''} · ordinal ${row.ordinal}</div>
+            ${row.note ? `<p class="body-sm" style="margin-top:6px">${esc(row.note)}</p>` : ''}
+            <div class="caption muted" style="margin-top:12px">Parameters</div>
+            <pre class="code">${esc(params ? JSON.stringify(params, null, 2) : 'no parameters')}</pre>
+            <div class="caption muted" style="margin-top:12px">How to replay this call</div>
+            <pre class="code">${esc(cmd)}</pre>
+            <button class="btn btn-secondary" style="margin-top:10px;padding:8px 14px;min-height:34px;font-size:13px" data-ef-copy="${esc(row.id)}" ${detail.sectors_base ? '' : 'disabled'}>${f.copied === row.id ? 'Copied' : 'Copy'}</button>
+          </div>` : ''}
+        </div>`;
+      }).join('')}`;
+  }
+
+  /* transcript */
+  function prettyJson(text) {
+    try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; }
+  }
+  function renderBody(body) {
+    const parts = [];
+    let pending = [];
+    let fenced = null;
+    const flushProse = () => {
+      if (pending.length) { parts.push({ kind: 'prose', text: pending.join('\n') }); pending = []; }
+    };
+    for (const line of body.split('\n')) {
+      if (line.trimStart().startsWith('```')) {
+        if (fenced === null) { flushProse(); fenced = []; }
+        else { parts.push({ kind: 'code', text: fenced.join('\n') }); fenced = null; }
+        continue;
+      }
+      if (fenced !== null) fenced.push(line); else pending.push(line);
+    }
+    if (fenced !== null) parts.push({ kind: 'code', text: fenced.join('\n') });
+    flushProse();
+    return parts.map(p => p.kind === 'code'
+      ? `<pre class="code">${esc(prettyJson(p.text))}</pre>`
+      : `<p class="prose">${esc(p.text)}</p>`).join('');
+  }
+
+  function transcriptView(detail) {
+    const segs = detail.transcript_segments || [];
+    const raw = !!state.trRaw[detail.id];
+    const openOrdinal = state.trOpen[detail.id];
+    if (!segs.length) {
+      if (!detail.transcript) return '<p class="body-sm muted">No transcript was stored for this check.</p>';
+      return `<div class="banner banner-warn" style="margin-bottom:10px">The transcript could not be split into sections; shown as-is.</div>
+              <div class="transcript">${esc(detail.transcript)}</div>`;
+    }
+    const list = raw
+      ? `<div class="transcript">${esc(detail.transcript || '(no transcript stored)')}</div>`
+      : segs.map(seg => {
+          const isOpen = openOrdinal === seg.ordinal;
+          return `
+          <div class="seg ${isOpen ? 'open' : ''}">
+            <button class="seg-head" aria-expanded="${isOpen}" data-tr-toggle="${seg.ordinal}">
+              <span class="kbadge kbadge-${esc(seg.kind)}">${esc(seg.label)}</span>
+              <span class="mono dim">${esc(seg.title)}</span>
+              <span class="spacer"></span>
+              ${seg.evidence_ordinals && seg.evidence_ordinals.length ? `<span class="micro muted">${seg.evidence_ordinals.length} evidence</span>` : ''}
+              <span class="muted seg-chev">${isOpen ? '&#9662;' : '&#9656;'}</span>
+            </button>
+            ${!isOpen && seg.summary ? `<div class="seg-sum">${esc(seg.summary)}</div>` : ''}
+            ${isOpen ? `<div class="seg-body">${renderBody(seg.body || '')}</div>` : ''}
+          </div>`;
+        }).join('');
+    return `
+      <div class="toolbar">
+        <span class="micro muted">${segs.length} sections</span>
+        <span class="spacer"></span>
+        <button class="btn btn-secondary" style="padding:8px 14px;min-height:34px;font-size:13px" data-tr-raw>${raw ? 'View structured' : 'View raw'}</button>
+      </div>
+      ${list}`;
+  }
+
+  function workspaceView(id) {
+    const th = state.thesis[id];
+    if (!th) return '<p class="body-sm muted" style="padding-top:var(--s-section)">loading...</p>';
+    const newest = (th.latest && th.latest.id) || (th.checks[0] && th.checks[0].id) || null;
+    const selected = state.selectedCheck[id] || newest;
+    if (selected && !state.selectedCheck[id]) state.selectedCheck[id] = selected;
+    const detail = selected ? state.check[selected] : null;
+    const unresolved = readUnresolved(th.translation);
+    const changes = (detail ? detail.changes : null) ?? th.recent_changes ?? [];
+
+    return `
+      <section class="qhead">
+        <div class="qhead-top">
+          <h1 class="headline">${esc(th.symbol)}</h1>
+          <span class="qhead-count micro muted">${esc(th.company_name || th.sub_sector || th.sector || '')}</span>
+          <span class="spacer"></span>
+          <div class="pillrow">
+            <button class="btn btn-secondary" data-act="watch" data-id="${esc(th.id)}" ${state.mode !== 'live' ? 'disabled title="needs a live server"' : ''}>${th.watch ? 'Unwatch' : 'Watch'}</button>
+            <button class="btn btn-primary" data-act="run-check" data-id="${esc(th.id)}" ${jobRunning() ? 'disabled' : ''}>
+              ${jobRunning() ? 'Running…' : 'Check now'}</button>
+          </div>
+        </div>
+        ${state.fatal && state.mode === 'live' ? `<div class="banner banner-bad">${esc(state.fatal)}</div>` : ''}
+        <p class="body-lg" style="font-size:20px">${esc(th.statement)}</p>
+        <div class="qstats">
+          ${chip(th.status)}
+          <span class="qstat"><b>${esc(fmtConf(th.confidence))}</b> confidence</span>
+          <span class="qstat"><b>${esc(th.horizon || '—')}</b> horizon</span>
+          <span class="qstat"><b>${th.claims ? th.claims.length : 0}</b> claims</span>
+          <span class="qstat"><b>${th.checks ? th.checks.length : 0}</b> checks</span>
+          <span class="qstat"><b>${th.source === 'agent' ? 'model' : 'heuristic'}</b> splitter</span>
+          ${th.watermark ? `<span class="qstat">watermark <b>${esc(shortDate(th.watermark))}</b></span>` : ''}
+        </div>
+      </section>
+      ${detail ? `
+      <section class="section" style="margin-top:var(--s-xl)">
+        <div class="card card-featured">
+          <div class="pillrow">
+            ${chip(detail.verdict)}
+            ${decisionBadge(detail.decision_path)}
+            <strong>confidence ${esc(fmtConf(detail.confidence))}</strong>
+            ${detail.confidence_source ? `<span class="micro dim">from ${esc(detail.confidence_source)}</span>` : ''}
+            <span class="spacer"></span>
+            <span class="mono dim">${esc(detail.engine || '?')} · ${detail.tool_calls} tool calls · ${detail.credits} credits</span>
+          </div>
+          <p class="body-lg" style="margin-top:var(--s-md);font-size:20px;line-height:1.6">${esc(detail.summary || 'still running — the verdict is not in yet')}</p>
+          <div class="mono dim" style="margin-top:10px">${esc(detail.checked_at)}${detail.since ? ' · watermark since ' + esc(shortDate(detail.since)) : ''}${!detail.finished ? ' · in progress' : ''}</div>
+        </div>
+      </section>` : ''}
+
+      <section class="section" style="margin-top:var(--s-xl)">
+        <div class="secttl">
+          <span class="eyebrow">since last check</span>
+          <h2 class="d-md">Changes</h2>
+        </div>
+        <div class="card">${changeStrip(changes)}</div>
+      </section>
+
+      <section class="section">
+        <div class="secttl">
+          <span class="eyebrow">split result</span>
+          <h2 class="d-md">Checkable claims</h2>
+        </div>
+        <div class="card card-tight">
+          ${claimList(th.claims || [])}
+          ${unresolved.length ? `
+          <div class="banner banner-warn" style="margin-top:var(--s-md)">
+            <strong>Not checkable with this data:</strong>
+            <ul class="bullets caption" style="margin-top:6px">
+              ${unresolved.map(u => `<li>${esc(u.text)} — <span class="dim">${esc(u.reason)}</span></li>`).join('')}
+            </ul>
+            <div class="dim micro" style="margin-top:8px">Shown, not discarded. A thesis that is half
+              unverifiable is itself a finding.</div>
+          </div>` : ''}
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="secttl">
+          <span class="eyebrow">history</span>
+          <h2 class="d-md">Checks</h2>
+        </div>
+        ${th.checks.length ? `<div class="pillrow" style="margin-bottom:var(--s-md);overflow-x:auto;padding-bottom:4px;flex-wrap:nowrap">
+          ${th.checks.map(ch => `
+          <button class="btn ${ch.id === selected ? 'btn-primary' : 'btn-secondary'}" data-check="${esc(ch.id)}" data-thesis="${esc(th.id)}" title="${esc(ch.summary || '')}">
+            ${chip(ch.verdict)} <span class="mono dim" style="font-size:12px">${esc(relative(ch.checked_at))}</span>
+          </button>`).join('')}
+        </div>` : ''}
+        ${detail ? `
+          <div class="secttl" style="margin-top:var(--s-xl)">
+            <span class="eyebrow">per claim</span>
+            <h3 class="d-md">Per-claim results</h3>
+          </div>
+          <div style="overflow-x:auto">
+          <table class="tbl">
+            <thead><tr><th style="width:130px">Status</th><th>Claim</th><th style="width:130px;min-width:140px">Observed</th><th style="width:110px" class="num">YoY</th></tr></thead>
+            <tbody>
+            ${(detail.claim_results || []).map(r => `
+              <tr>
+                <td>${stateChip(r.state)}</td>
+                <td>${esc(r.text)}<div class="micro dim" style="margin-top:6px">${esc(r.rationale || '')}</div></td>
+                <td class="mono dim">${esc(shortDate(r.observed_date))}</td>
+                <td class="mono num">${esc(r.delta == null ? '—' : String(r.delta))}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+          </div>
+
+          <div class="secttl" style="margin-top:var(--s-xl)">
+            <span class="eyebrow">trace</span>
+            <h3 class="d-md">Evidence — every number with its source</h3>
+          </div>
+          <div class="card card-tight" data-ev-card>${evidenceTable(detail)}</div>
+
+          <div class="secttl" style="margin-top:var(--s-xl)">
+            <span class="eyebrow">agent loop</span>
+            <h3 class="d-md">Agent transcript</h3>
+            <p class="body-sm muted">The tools below were picked by the agent, not a script. You can see which tools
+              it reached for, what they cost, and where it changed its own mind.</p>
+          </div>
+          <div data-tr-view>${transcriptView(detail)}</div>` : th.checks.length ? '' : `
+          <div class="card"><p class="body-sm muted">Not checked yet. Click <strong>Check now</strong> — the agent loop appears in the
+            <span class="mono">${isNarrow() ? 'agent log' : 'right panel'}</span>.</p></div>`}
+      </section>`;
+  }
+
+  /* ---------------- live panel ---------------- */
+  function liveHTML() {
+    const job = activeJob();
+    const running = jobRunning();
+    const events = jobEvents();
+    const stateLabel = job ? (running ? 'working' : job.state) : 'idle';
+    const idle = !running && events.length === 0 && !state.fatal;
+    const last = events.length ? events[events.length - 1] : null;
+    return `
+      <div class="dock-head">
+        <button class="btn btn-ghost btn-icon" data-act="dock" aria-label="${state.dock ? 'Hide agent log' : 'Show agent log'}" aria-expanded="${state.dock ? 'true' : 'false'}" title="${state.dock ? 'Hide agent log' : 'Show agent log'}">${state.dock ? '&#9662;' : '&#9656;'}</button>
+        ${running ? '<span class="pulse"></span>' : '<i class="dot dot-unknown"></i>'}
+        <strong class="body-sm">${esc(job ? job.kind : 'no job')}</strong>
+        <span class="dock-state">${job && job.symbol ? esc(job.symbol) + ' · ' : ''}${esc(stateLabel)}${job && job.simulation ? ' · simulation (snapshot)' : ''}</span>
+        <span class="spacer"></span>
+        <span class="micro muted">${events.length} step(s)</span>
+      </div>
+      ${state.fatal && state.mode === 'live' ? `<div class="banner banner-bad" style="margin:12px">${esc(state.fatal)}</div>` : ''}
+      ${idle ? `<p class="body-sm muted" style="padding:12px 16px 20px">Start a check to watch the agent work.</p>` : `
+      <ol class="dock-log">
+        ${events.length === 0 ? `<li class="logline"><span>${running ? 'Waiting for the first step…' : 'Start a check to watch the agent work.'}</span></li>`
+          : events.map(ev => `<li class="logline ${esc(ev.kind)}"><span class="at">${esc(ev.at)}</span><span>${esc(describe(ev))}</span></li>`).join('')}
+      </ol>
+      ${last && !running ? `<p class="micro muted" style="padding:8px 16px 14px">Last: ${esc(describe(last))}</p>` : ''}`}`;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * render
+   * ------------------------------------------------------------------ */
+  function render() {
+    const v = state.view;
+    const withRail = v.name === 'thesis';
+    const viewHTML = v.name === 'queue' ? queueView()
+      : v.name === 'new' ? composeView()
+      : v.name === 'notifications' ? notificationsView()
+      : workspaceView(v.id);
+    root.innerHTML = `
+      <div class="app">
+        ${headerHTML()}
+        <div class="work ${withRail ? 'with-rail' : ''} ${withRail && !withRailVisible() ? 'rail-hidden' : ''} ${state.dock ? '' : 'dock-hidden'}">
+          ${withRail ? railHTML(v.id) : ''}
+          <main class="main">
+            <div class="main-inner">
+              ${viewHTML}
+              ${footerHTML()}
+            </div>
+          </main>
+          ${state.dock ? `<aside class="dock" id="live" aria-label="agent log">${liveHTML()}</aside>` : ''}
+        </div>
+      </div>`;
+    applyDock();
+  }
+
+  function renderHeaderPeek() {
+    const btn = document.querySelector('.dock-peek');
+    if (!btn) return;
+    const { dot, label } = jobSummary();
+    btn.innerHTML = `${dot}<span>${esc(label)}</span>`;
+    btn.hidden = state.dock;
+  }
+
+  function renderLive() {
+    const el = document.getElementById('live');
+    if (el) el.innerHTML = liveHTML();
+    applyDock();
+    renderHeaderPeek();
+  }
+
+  /* Satu tempat yang memutuskan apakah dock terlihat. Di >=1280px dock adalah
+     kolom statis (selalu tampak, `.open` tak berarti); di bawahnya ia sheet
+     dari bawah dan `.work.dock-open` memberi ruang scroll supaya footer tidak
+     tertutup. Dipakai oleh render penuh maupun update log parsial. */
+  function applyDock() {
+    const dock = document.querySelector('.dock');
+    const work = document.querySelector('.work');
+    if (!dock || !work) return;
+    const narrow = isNarrow();
+    dock.classList.toggle('open', state.dock);
+    work.classList.toggle('dock-open', narrow && state.dock);
+    document.querySelectorAll('[data-act="dock"]').forEach(b => b.setAttribute('aria-expanded', state.dock ? 'true' : 'false'));
+  }
+  function scrollLive() {
+    const el = document.querySelector('#live .dock-log');
+    if (el) el.scrollTop = el.scrollHeight;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * events — one delegated listener set, installed once. Per-render
+   * binding would stack duplicate handlers over partial re-renders.
+   * ------------------------------------------------------------------ */
+  function currentDetailId() {
+    return state.view.name === 'thesis' ? state.selectedCheck[state.view.id] : null;
+  }
+  function refreshEvidence() {
+    const card = document.querySelector('[data-ev-card]');
+    const id = currentDetailId();
+    if (card && id && state.check[id]) card.innerHTML = evidenceTable(state.check[id]);
+  }
+  function refreshTranscript() {
+    const holder = document.querySelector('[data-tr-view]');
+    const id = currentDetailId();
+    if (holder && id && state.check[id]) holder.innerHTML = transcriptView(state.check[id]);
+  }
+
+  function setupEvents() {
+    /* Menu disclosure ditutup lewat DOM, bukan lewat render ulang: klik pada
+       pil yang sudah aktif tidak mengubah hash, jadi tak ada render yang
+       datang untuk memaksa `state.menu` kembali false. */
+    const closeMenu = () => {
+      if (!state.menu) return;
+      state.menu = false;
+      const nav = document.querySelector('.navpills');
+      if (nav) nav.classList.remove('open');
+      const btn = document.querySelector('.hamburger');
+      if (btn) btn.setAttribute('aria-expanded', 'false');
+    };
+
+    root.addEventListener('click', async (e) => {
+      const t = e.target;
+      const hit = sel => t.closest(sel);
+
+      if (hit('[data-nav]') || hit('.navpill') || hit('.brand')) closeMenu();
+
+      if (hit('[data-ef-copy]')) {
+        e.stopPropagation();
+        const id = currentDetailId();
+        const detail = state.check[id];
+        const btn = hit('[data-ef-copy]');
+        if (!detail) return;
+        const row = (detail.evidence || []).find(r => r.id === btn.dataset.efCopy);
+        if (!row) return;
+        const f = evf(id);
+        try {
+          await navigator.clipboard.writeText(reproduction(row, detail.sectors_base || ''));
+          f.copied = row.id;
+          refreshEvidence();
+          setTimeout(() => {
+            const cur = state.evFilter[id];
+            if (cur && cur.copied === row.id) { cur.copied = null; refreshEvidence(); }
+          }, 2000);
+        } catch { /* clipboard refused — the command is on screen already */ }
+        return;
+      }
+      const src = hit('[data-ef-src]');
+      if (src) {
+        const id = currentDetailId();
+        if (id) { evf(id).source = src.dataset.efSrc; refreshEvidence(); }
+        return;
+      }
+      const erow = hit('[data-ef-row]');
+      if (erow) {
+        const id = currentDetailId();
+        if (!id) return;
+        const f = evf(id);
+        f.open = f.open === erow.dataset.efRow ? null : erow.dataset.efRow;
+        refreshEvidence();
+        return;
+      }
+      const trBtn = hit('[data-tr-toggle]');
+      if (trBtn) {
+        const id = currentDetailId();
+        const ordinal = Number(trBtn.dataset.trToggle);
+        state.trOpen[id] = state.trOpen[id] === ordinal ? null : ordinal;
+        refreshTranscript();
+        return;
+      }
+      if (hit('[data-tr-raw]')) {
+        const id = currentDetailId();
+        state.trRaw[id] = !state.trRaw[id];
+        refreshTranscript();
+        return;
+      }
+      const checkBtn = hit('[data-check]');
+      if (checkBtn) {
+        state.selectedCheck[state.view.id] = checkBtn.dataset.check;
+        render();
+        return;
+      }
+      const openRow = hit('[data-open]');
+      if (openRow) { location.hash = '#/thesis/' + openRow.dataset.open; return; }
+
+      const actBtn = hit('[data-act]');
+      if (!actBtn || actBtn.disabled) return;
+      const act = actBtn.dataset.act;
+      if (act === 'run-check') await runCheck(actBtn.dataset.id);
+      else if (act === 'check-all') await checkAll();
+      else if (act === 'watch') await toggleWatch(state.thesis[actBtn.dataset.id]);
+      else if (act === 'mark-read') markRead();
+      else if (act === 'menu') { state.menu = !state.menu; render(); }
+      else if (act === 'dock') { state.dock = !state.dock; render(); }
+      else if (act === 'rail') { state.rail = !state.rail; render(); }
+      else if (act === 'create') await createThesis();
+      else if (act === 'reset-compose') { state.compose = { symbol: '', statement: '', horizon: '2 quarters', result: null, busy: false, note: null, error: null }; render(); }
+      else if (act === 'open-result') location.hash = '#/thesis/' + actBtn.dataset.id;
+      else if (act === 'drafts') await loadDrafts();
+      else if (act === 'use-draft') {
+        const d = ((state.drafts && state.drafts.drafts) || []).find(x => x.symbol === actBtn.dataset.i);
+        if (d) { state.compose.symbol = d.symbol; state.compose.statement = d.statement; state.compose.horizon = d.horizon; render(); }
+      }
+    });
+
+    /* klik di luar panel menutup menu; Escape juga */
+    document.addEventListener('click', (e) => {
+      if (!state.menu) return;
+      if (e.target.closest && e.target.closest('.navpills, .hamburger')) return;
+      closeMenu();
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+
+    root.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const erow = e.target.closest && e.target.closest('[data-ef-row]');
+      if (!erow) return;
+      e.preventDefault();
+      const id = currentDetailId();
+      if (!id) return;
+      const f = evf(id);
+      f.open = f.open === erow.dataset.efRow ? null : erow.dataset.efRow;
+      refreshEvidence();
+    });
+
+    root.addEventListener('input', (e) => {
+      const el = e.target;
+      if (el.id === 'ef-search') {
+        const id = currentDetailId();
+        if (!id) return;
+        evf(id).q = el.value;
+        const caret = el.selectionStart;
+        refreshEvidence();
+        const again = document.getElementById('ef-search');
+        if (again) { again.focus(); try { again.setSelectionRange(caret, caret); } catch {} }
+        return;
+      }
+      const map = { 'f-symbol': 'symbol', 'f-statement': 'statement', 'f-horizon': 'horizon' };
+      if (map[el.id]) {
+        if (el.id === 'f-symbol') el.value = el.value.toUpperCase();
+        state.compose[map[el.id]] = el.value;
+        const btn = document.querySelector('[data-act=create]');
+        if (btn) btn.disabled = state.compose.busy
+          || state.compose.symbol.trim().length < 3
+          || state.compose.statement.trim().length < 10;
+      }
+    });
+  }
+
+  async function loadDrafts() {
+    state.compose.note = 'Reading reports…';
+    render();
+    if (state.mode === 'live') {
+      try {
+        const d = await jfetch('/api/draft?subsector=banks&count=3');
+        state.drafts = d;
+        state.compose.note = d.note + ' (' + d.credits + ' credits)';
+      } catch (err) { state.compose.error = err.message; state.compose.note = null; }
+    } else {
+      state.compose.note = 'from snapshot' + (state.drafts ? ` (${state.drafts.credits} credits when taken)` : '');
+    }
+    render();
+  }
+
+  async function createThesis() {
+    const c = state.compose;
+    c.busy = true; c.error = null;
+    render();
+    try {
+      if (state.mode === 'live') {
+        const payload = await jfetch('/api/thesis', { method: 'POST', body: JSON.stringify({ symbol: c.symbol, statement: c.statement, horizon: c.horizon }) });
+        c.result = { id: payload.thesis.id, split: payload.decomposition, credits: payload.credits };
+      } else {
+        throw new Error('Snapshot mode: start `thesisradar serve` to save a thesis.');
+      }
+    } catch (err) {
+      c.error = err.message || String(err);
+    }
+    c.busy = false;
+    render();
+    if (c.result) window.scrollTo(0, 0);
+  }
+
+  /* ------------------------------------------------------------------ *
+   * boot
+   * ------------------------------------------------------------------ */
+  window.addEventListener('hashchange', () => {
+    state.view = parseHash();
+    state.fatal = null;
+    state.menu = false;
+    refreshSoon();
+  });
+
+  (async function boot() {
+    setupEvents();
+    await probeMode();
+    await loadAll();
+    if (state.mode === 'live') connectSSE();
+    render();
+    /* header refresh while a job runs — same 5 s cadence as the React app */
+    setInterval(() => { if (jobRunning() && state.mode === 'live') refreshSoon(); }, 5000);
+  })();
+  </script>
+</body>
+</html>
