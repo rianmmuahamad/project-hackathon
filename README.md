@@ -17,6 +17,13 @@ longer holds*, and two of the first real runs came back that way.
 > masih bergerak sesuai posisi. Jawabannya boleh "tesis ini sudah tidak berlaku" — dan itu
 > memang keluar dari run nyata pertama.
 
+**Two companion documents** — read them in this order:
+
+| Document | Read it if… |
+| --- | --- |
+| [`docs/THESIS-PRIMER.md`](docs/THESIS-PRIMER.md) | **the investing idea is unclear to you.** What a thesis is, why it goes stale, what a claim is, why a number can lie (the restatement case, in full), and how to read a verdict. No code. |
+| [`docs/PROJECT.md`](docs/PROJECT.md) | **you need the technical map.** Every stage of the pipeline, the data layer, the memory schema, the agent loop, the autonomy, all interfaces, configuration, and the verification strategy. |
+
 ---
 
 ## The failure this exists to prevent
