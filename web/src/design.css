@@ -198,9 +198,10 @@ code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, mo
 .dock-toggle { display: none; }
 
 /* ---------------- mobile: the nav group moves to the bottom ----------------
-   The desktop header group is untouched. Below 900px this wrapper pins a copy
-   of it to the bottom edge, and both the wrapper and the pills inside it are
-   stripped of any background so the bar is just floating text. The wrapper is
+   The pill group keeps its own treatment — background, radius, padding, and a
+   filled pill for the active item are all the desktop group's own. Only the
+   wrapper that pins it to the bottom edge is background-free, so the bar reads
+   as the floating pill group rather than a full-width strip. The wrapper is
    `display: none` above 900px, so exactly one nav exists in the tree. */
 .bottombar { display: none; }
 @media (max-width: 900px) {
@@ -210,11 +211,6 @@ code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, mo
     padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
     background: none; border-top: 0;
   }
-  /* No tile behind the pills, and no filled pill for the active one: colour and
-     weight carry the state instead of a background. */
-  .bottombar .navpills { background: none; border-radius: 0; padding: 0; gap: var(--s-sm); }
-  .bottombar .navpill { padding: 7px 2px; border-radius: 0; }
-  .bottombar .navpill.on { background: none; font-weight: 600; }
 }
 
 /* ---------------- chip status & badge ---------------- */
