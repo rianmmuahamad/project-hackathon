@@ -192,10 +192,39 @@ code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, mo
 .btn:disabled { opacity: .4; cursor: not-allowed; }
 @media (hover: none) { .btn { min-height: 44px; } .btn-icon { width: 44px; height: 44px; } }
 
-/* Hamburger + dock icon live only at narrow breakpoints. Must sit AFTER the
-   `.btn` block above: `.btn { display:inline-flex }` has equal specificity,
-   so the later rule wins — placed above, the icons would leak onto desktop. */
-.hamburger, .dock-toggle { display: none; }
+/* The dock icon lives only at narrow breakpoints. Must sit AFTER the `.btn`
+   block above: `.btn { display:inline-flex }` has equal specificity, so the
+   later rule wins — placed above, the icon would leak onto desktop. */
+.dock-toggle { display: none; }
+
+/* ---------------- mobile bottom bar ----------------
+   Below 900px the primary navigation moves from a hamburger popover to a fixed
+   bottom bar: reachable with a thumb, always visible, and it does not occlude
+   the top of the page. Above 900px this element is not rendered at all
+   (`BottomBar` returns null), so there is no hidden duplicate of the nav in the
+   accessibility tree on desktop. */
+.bottombar { display: none; }
+@media (max-width: 900px) {
+  .bottombar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+    display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
+    background: var(--canvas); border-top: 1px solid var(--hair);
+    padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+  }
+  .bottombar-item {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 3px; min-height: 52px; padding: 6px 4px;
+    background: none; border: 0; border-radius: 0;
+    color: var(--ink-muted); font-size: 11px; font-weight: 500; letter-spacing: -.01em;
+    text-align: center;
+  }
+  /* Active state is colour and a top indicator bar, not a filled rounded box:
+     a pill-shaped tile reads as a card, which is what a bottom bar must not
+     look like. */
+  .bottombar-item.on { color: var(--inverse); box-shadow: inset 0 2px 0 var(--primary); }
+  .bottombar-icon { font-size: 17px; line-height: 1; }
+  .bottombar-label { display: inline-flex; align-items: center; gap: 4px; }
+}
 
 /* ---------------- chip status & badge ---------------- */
 .chip {
@@ -425,15 +454,11 @@ textarea.input { min-height: 130px; resize: vertical; line-height: 1.4; }
 @media (max-width: 900px) {
   .topnav { grid-template-columns: auto 1fr auto; }
   .brand-sub, .dock-peek span { display: none; }
-  .navpills {
-    display: none; position: absolute; top: 56px; left: var(--s-lg); right: var(--s-lg);
-    flex-direction: column; align-items: stretch; background: var(--sf-1);
-    border: 1px solid var(--hair); border-radius: var(--r-xl); padding: var(--s-xs); gap: 2px;
-    box-shadow: var(--shadow-lift);
-  }
-  .navpills.open { display: flex; }
-  .navpill { justify-content: flex-start; min-height: 44px; }
-  .hamburger { display: inline-flex; }
+  /* The bottom bar is the primary navigation at this width; keep exactly one
+     nav visible rather than two that disagree. */
+  .navpills { display: none; }
+  /* Clear the fixed bottom bar, plus the home indicator on iOS. */
+  .main-inner { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
 }
 @media (max-width: 809px) {
   .main-inner { padding-left: var(--s-lg); padding-right: var(--s-lg); }

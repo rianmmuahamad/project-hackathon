@@ -11,11 +11,18 @@ import type { Job, QueueRow, Stats } from "./types";
 
 type View = { name: "queue" } | { name: "thesis"; id: string } | { name: "new" } | { name: "notifications" };
 
-const NAV: Array<[View["name"], string]> = [
+const NAV = [
   ["queue", "Queue"],
   ["new", "New thesis"],
   ["notifications", "Notifications"],
-];
+] as const;
+
+/** One glyph per primary destination, for the mobile bottom bar. */
+const NAV_ICON: Record<(typeof NAV)[number][0], string> = {
+  queue: "◎",
+  new: "＋",
+  notifications: "◔",
+};
 
 function parseHash(): View {
   const hash = window.location.hash.replace(/^#\/?/, "");
@@ -32,7 +39,6 @@ export function App() {
   const [job, setJob] = useState<Job | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
   const [fatal, setFatal] = useState<string | null>(null);
-  const [menu, setMenu] = useState(false);
   const [dock, setDock] = useState(true);
   const [rail, setRail] = useState(true);
 
@@ -50,7 +56,6 @@ export function App() {
   useEffect(() => {
     const onHash = () => {
       setView(parseHash());
-      setMenu(false);
     };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
@@ -81,24 +86,6 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [job?.state, refresh]);
 
-  useEffect(() => {
-    if (!menu) return;
-    const close = (event: MouseEvent) => {
-      const target = event.target;
-      if (target instanceof Element && target.closest(".navpills, .hamburger")) return;
-      setMenu(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMenu(false);
-    };
-    document.addEventListener("click", close);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("click", close);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [menu]);
-
   const running = job?.state === "running";
   const engine = stats?.engine ?? {};
   const engineName = Object.entries(engine).find(([, info]) => info.available)?.[0] ?? "none";
@@ -116,7 +103,7 @@ export function App() {
           </a>
         </div>
 
-        <nav className={`navpills${menu ? " open" : ""}`} aria-label="primary">
+        <nav className="navpills" aria-label="primary">
           {NAV.map(([name, label]) => (
             <a key={name} href={`#/${name}`} className={`navpill${view.name === name ? " on" : ""}`}>
               {label}
@@ -126,14 +113,6 @@ export function App() {
         </nav>
 
         <div className="topnav-right">
-          <button
-            className="btn btn-ghost btn-icon hamburger"
-            aria-label="Open menu"
-            aria-expanded={menu}
-            onClick={() => setMenu(!menu)}
-          >
-            ☰
-          </button>
           {!dock && (
             <button className="dock-peek" onClick={() => setDock(true)} title="Show agent log">
               {running ? <i className="pulse" /> : <i className="dot dot-unknown" />}
@@ -216,7 +195,39 @@ export function App() {
 
         {dock && <LiveJob job={job} onFinished={bump} />}
       </div>
+
+      <BottomBar current={view.name} unread={unread} />
     </div>
+  );
+}
+
+/**
+ * The primary navigation on a phone.
+ *
+ * Rendered on every viewport but `display: none` above 900px via `.bottombar`,
+ * so there is exactly one nav in the accessibility tree at any width and no
+ * JS width listener to keep in sync.
+ */
+function BottomBar({ current, unread }: { current: View["name"]; unread: number }) {
+  return (
+    <nav className="bottombar" aria-label="primary">
+      {NAV.map(([name, label]) => (
+        <a
+          key={name}
+          href={`#/${name}`}
+          className={`bottombar-item${current === name ? " on" : ""}`}
+          aria-current={current === name ? "page" : undefined}
+        >
+          <span className="bottombar-icon" aria-hidden="true">
+            {NAV_ICON[name]}
+          </span>
+          <span className="bottombar-label">
+            {label}
+            {name === "notifications" && unread > 0 && <b className="navcount">{unread}</b>}
+          </span>
+        </a>
+      ))}
+    </nav>
   );
 }
 
